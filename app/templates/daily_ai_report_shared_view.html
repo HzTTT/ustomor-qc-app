@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-4">
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <div class="text-sm text-slate-500 flex items-center gap-2">
+        <span class="px-2 py-1 rounded-full bg-slate-100">分享页</span>
+        <span>任何拥有链接的人都可以查看这份报告</span>
+      </div>
+      <h1 class="text-2xl font-semibold mt-2">每日AI总结：{{ report.run_date }}</h1>
+      <div class="text-sm text-slate-500 mt-1">
+        纳入：{{ report.included_conversations }} 个对话 / {{ report.included_messages }} 条消息 · 输入字符约 {{ report.input_chars }}
+        · 模型：<span class="font-mono">{{ report.model or "-" }}</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/login" class="px-4 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">登录</a>
+    </div>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="prose max-w-none">
+      {{ html_body | safe }}
+    </div>
+  </div>
+</div>
+{% endblock %}

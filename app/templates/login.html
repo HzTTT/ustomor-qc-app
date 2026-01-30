@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-md mx-auto bg-white border rounded-2xl p-6">
+  <h1 class="text-xl font-semibold mb-4">登录</h1>
+  {% if error %}
+    <div class="mb-4 text-sm text-red-600">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/login" class="space-y-3">
+    {% if next %}
+      <input type="hidden" name="next" value="{{ next }}" />
+    {% endif %}
+    <div>
+      <label class="block text-sm text-slate-600 mb-1">用户名</label>
+      <input name="username" type="text" class="w-full border rounded-xl px-3 py-2" required />
+    </div>
+    <div>
+      <label class="block text-sm text-slate-600 mb-1">密码</label>
+      <input name="password" type="password" class="w-full border rounded-xl px-3 py-2" required />
+    </div>
+    <button class="w-full bg-slate-900 text-white rounded-xl py-2">登录</button>
+  </form>
+  <div class="mt-4 text-sm text-slate-500">
+    没有账号？<a class="underline" href="/register">去注册</a>
+  </div>
+</div>
+{% endblock %}

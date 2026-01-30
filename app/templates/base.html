@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title or "客服质检与培训(MVP)" }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="min-h-screen">
+    <div class="bg-white border-b">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <a href="/conversations" class="font-semibold">客服质检与培训</a>
+          {% if user %}
+            <span class="text-xs px-2 py-1 rounded-full bg-slate-100">{{ user.role }}</span>
+            <div class="ml-3 flex items-center gap-2">
+              {% set _path = request.url.path %}
+              <a href="/conversations" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/conversations') else 'bg-white border' }}">聊天记录</a>
+              {% if user.role in ['admin','supervisor'] %}
+              <a href="/qc/daily" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path == '/qc/daily' else 'bg-white border' }}">AI质检</a>
+              <a href="/settings/tag-suggestions" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/settings/tag-suggestions') else 'bg-white border' }}">标签建议</a>
+              {% endif %}
+              <a href="/tasks" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/tasks') else 'bg-white border' }}">培训</a>
+              <a href="/reports" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if (_path == '/reports' or _path.startswith('/reports/daily') or _path.startswith('/reports/ai') or _path.startswith('/reports/voc')) else 'bg-white border' }}">报表</a>
+              <a href="/reports/tags" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/reports/tags') else 'bg-white border' }}">标签报表</a>
+            </div>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-3 text-sm">
+          {% if user %}
+            <details class="relative">
+              <summary class="list-none cursor-pointer px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50">系统设置</summary>
+              <div class="absolute right-0 mt-2 w-56 bg-white border rounded-lg shadow-lg p-2 z-50">
+                {% if user.role in ["admin", "supervisor"] %}
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/general">应用设置</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/bindings">客服绑定</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/dashboard">同步概览</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/bucket">桶抓取/导入</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/tags">标签管理</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai">AI配置</a>
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai/daily">每日AI总结</a>
+                {% endif %}
+                {% if user.role == "admin" %}
+                  <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/admin/users">账号管理</a>
+                {% endif %}              </div>
+            </details>
+            <span class="text-slate-500">{{ user.name }}</span>
+            <a class="hover:underline" href="/logout">退出</a>
+          {% else %}
+            <a class="hover:underline" href="/login">登录</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <!-- CID quick preview modal (auto-activated when users click "CID=xxxx" anywhere) -->
+  <div id="cidModal" class="fixed inset-0 z-[60] hidden" aria-hidden="true">
+    <div id="cidModalBackdrop" class="absolute inset-0 bg-slate-900/40"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="w-full max-w-3xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+        <div class="px-4 py-3 border-b flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-sm text-slate-500" id="cidModalMeta">对话预览</div>
+            <div class="font-semibold truncate" id="cidModalTitle">CID</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <a id="cidModalOpenFull" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm" href="#">打开完整聊天</a>
+            <button id="cidModalClose" class="px-3 py-1.5 rounded-lg bg-white border text-sm hover:bg-slate-50">关闭</button>
+          </div>
+        </div>
+        <div class="p-4">
+          <div id="cidModalStatus" class="text-sm text-slate-500">加载中…</div>
+          <div id="cidModalBody" class="mt-3 max-h-[70vh] overflow-auto space-y-2 hidden"></div>
+        </div>
+        <div id="cidModalFooter" class="px-4 py-3 border-t bg-slate-50 text-xs text-slate-500 hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const CID_RE = /\bCID=(\d+)\b/g;
+      const SKIP_TAGS = new Set(["SCRIPT","STYLE","TEXTAREA","INPUT","CODE","PRE"]);
+
+      function linkifyCID(root) {
+        if (!root) return;
+
+        const walker = document.createTreeWalker(
+          root,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: (node) => {
+              const p = node.parentElement;
+              if (!p) return NodeFilter.FILTER_REJECT;
+              if (SKIP_TAGS.has(p.tagName)) return NodeFilter.FILTER_REJECT;
+              if (p.closest("a")) return NodeFilter.FILTER_REJECT;
+              if (!node.nodeValue || node.nodeValue.indexOf("CID=") === -1) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
+
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+
+        for (const node of nodes) {
+          const text = node.nodeValue || "";
+          let m;
+          CID_RE.lastIndex = 0;
+          if (!CID_RE.test(text)) continue;
+          CID_RE.lastIndex = 0;
+
+          const frag = document.createDocumentFragment();
+          let last = 0;
+          while ((m = CID_RE.exec(text)) !== null) {
+            const before = text.slice(last, m.index);
+            if (before) frag.appendChild(document.createTextNode(before));
+
+            const cid = m[1];
+            const a = document.createElement("a");
+            a.href = "#";
+            a.className = "cid-link underline decoration-dotted text-indigo-600 hover:text-indigo-700";
+            a.dataset.cid = cid;
+            a.textContent = "CID=" + cid;
+            frag.appendChild(a);
+
+            last = m.index + m[0].length;
+          }
+          const after = text.slice(last);
+          if (after) frag.appendChild(document.createTextNode(after));
+
+          node.parentNode && node.parentNode.replaceChild(frag, node);
+        }
+      }
+
+      // Modal
+      const modal = document.getElementById("cidModal");
+      const backdrop = document.getElementById("cidModalBackdrop");
+      const btnClose = document.getElementById("cidModalClose");
+      const elTitle = document.getElementById("cidModalTitle");
+      const elMeta = document.getElementById("cidModalMeta");
+      const elStatus = document.getElementById("cidModalStatus");
+      const elBody = document.getElementById("cidModalBody");
+      const elFooter = document.getElementById("cidModalFooter");
+      const elOpenFull = document.getElementById("cidModalOpenFull");
+
+      function showModal() {
+        if (!modal) return;
+        modal.classList.remove("hidden");
+        modal.setAttribute("aria-hidden", "false");
+        document.body.style.overflow = "hidden";
+      }
+
+      function hideModal() {
+        if (!modal) return;
+        modal.classList.add("hidden");
+        modal.setAttribute("aria-hidden", "true");
+        document.body.style.overflow = "";
+      }
+
+      function senderLabel(sender) {
+        if (sender === "buyer") return "买家";
+        if (sender === "agent") return "客服";
+        if (sender === "system") return "系统";
+        return sender || "-";
+      }
+
+      function renderMessages(messages) {
+        elBody.innerHTML = "";
+        for (const msg of messages || []) {
+          const row = document.createElement("div");
+          row.className = "flex";
+
+          const sender = msg.sender || "";
+          const isBuyer = sender === "buyer";
+          const isAgent = sender === "agent";
+
+          row.classList.add(isBuyer ? "justify-start" : (isAgent ? "justify-end" : "justify-center"));
+
+          const bubble = document.createElement("div");
+          bubble.className = "max-w-[90%] rounded-2xl px-3 py-2 border bg-white";
+
+          const head = document.createElement("div");
+          head.className = "text-xs text-slate-500 flex items-center justify-between gap-2";
+          const s = document.createElement("span");
+          s.textContent = (msg.sender_display || senderLabel(sender));
+          const t = document.createElement("span");
+          t.textContent = msg.ts ? (new Date(msg.ts)).toLocaleString() : "";
+          head.appendChild(s);
+          head.appendChild(t);
+
+          const body = document.createElement("div");
+          body.className = "mt-1 whitespace-pre-wrap text-sm leading-relaxed";
+          body.textContent = (msg.text || "").trim() || "（空）";
+
+          bubble.appendChild(head);
+          bubble.appendChild(body);
+
+          // attachments
+          // - render images inline
+          // - ignore internal meta/refs
+          // - only show file links when url exists
+          const attsRaw = Array.isArray(msg.attachments) ? msg.attachments : [];
+          const atts = attsRaw.filter(a => a && typeof a === "object");
+
+          const images = atts.filter(a => a.type === "image" && a.url);
+          const files = atts.filter(a => a.url && a.type && a.type !== "image" && a.type !== "meta" && a.type !== "refs");
+
+          if (images.length) {
+            const imgWrap = document.createElement("div");
+            imgWrap.className = "mt-2 flex flex-wrap gap-2";
+            for (const a of images) {
+              const url = String(a.url);
+              const link = document.createElement("a");
+              link.href = url;
+              link.target = "_blank";
+              link.rel = "noopener noreferrer";
+              link.className = "block";
+
+              const img = document.createElement("img");
+              img.src = url;
+              img.alt = "image";
+              img.loading = "lazy";
+              img.className = "max-h-48 rounded-xl border";
+
+              link.appendChild(img);
+              imgWrap.appendChild(link);
+            }
+            bubble.appendChild(imgWrap);
+          }
+
+          if (files.length) {
+            const list = document.createElement("div");
+            list.className = "mt-2 space-y-1";
+            for (const a of files) {
+              const url = String(a.url);
+              const item = document.createElement("a");
+              item.className = "text-xs underline text-slate-600 hover:text-slate-800 block";
+              item.href = url;
+              item.target = "_blank";
+              item.rel = "noopener noreferrer";
+              const name = (a && (a.name || a.filename || a.type)) ? String(a.name || a.filename || a.type) : "附件";
+              item.textContent = "附件：" + name;
+              list.appendChild(item);
+            }
+            bubble.appendChild(list);
+          }
+
+          row.appendChild(bubble);
+          elBody.appendChild(row);
+        }
+
+        // Make CID=xxxx inside the modal clickable too
+        linkifyCID(elBody);
+      }
+
+      async function openCidModal(cid) {
+        if (!cid) return;
+        showModal();
+
+        elTitle.textContent = "CID=" + cid;
+        elMeta.textContent = "对话预览";
+        elOpenFull.href = "/conversations/" + cid;
+
+        elStatus.textContent = "加载中…";
+        elStatus.classList.remove("hidden");
+        elBody.classList.add("hidden");
+        elFooter.classList.add("hidden");
+
+        try {
+          const resp = await fetch("/api/conversations/" + cid + "/preview?limit=200", { credentials: "same-origin" });
+          const data = await resp.json().catch(() => ({}));
+
+          if (!resp.ok) {
+            const msg = (data && data.detail) ? String(data.detail) : ("加载失败（" + resp.status + "）");
+            elStatus.textContent = msg;
+            return;
+          }
+
+          const conv = data.conversation || {};
+          const total = Number(data.total_messages || 0);
+          const truncated = !!data.is_truncated;
+
+          elMeta.textContent = [
+            conv.platform ? ("平台：" + conv.platform) : null,
+            conv.buyer_id ? ("买家：" + conv.buyer_id) : null,
+            conv.agent_account ? ("客服账号：" + conv.agent_account) : null
+          ].filter(Boolean).join(" · ") || "对话预览";
+
+          renderMessages(data.messages || []);
+
+          elStatus.classList.add("hidden");
+          elBody.classList.remove("hidden");
+
+          elFooter.textContent = truncated
+            ? ("为保证速度，这里只展示最新 " + (data.messages || []).length + " 条 / 共 " + total + " 条。")
+            : ("共 " + total + " 条消息。");
+          elFooter.classList.remove("hidden");
+        } catch (e) {
+          elStatus.textContent = "网络错误，稍后再试。";
+        }
+      }
+
+      // Global click handler for CID links
+      document.addEventListener("click", function (e) {
+        const a = e.target && e.target.closest ? e.target.closest(".cid-link") : null;
+        if (!a) return;
+        e.preventDefault();
+        const cid = a.dataset && a.dataset.cid ? a.dataset.cid : "";
+        openCidModal(cid);
+      });
+
+      // Close interactions
+      if (btnClose) btnClose.addEventListener("click", hideModal);
+      if (backdrop) backdrop.addEventListener("click", hideModal);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") hideModal();
+      });
+
+      // Initial pass + future dynamic content
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", function () {
+          linkifyCID(document.body);
+        });
+      } else {
+        linkifyCID(document.body);
+      }
+
+      // Observe new nodes (future pages / async inserts)
+      const mo = new MutationObserver(function (mutations) {
+        for (const m of mutations) {
+          for (const n of m.addedNodes || []) {
+            if (n && n.nodeType === 1) linkifyCID(n);
+          }
+        }
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+    })();
+  </script>
+
+</body>
+</html>

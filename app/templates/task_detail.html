@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">训练任务 #{{ task.id }}</h1>
+    <div class="text-sm text-slate-500 mt-1">
+      状态：{{ task.status }} · 对话：<a class="underline" href="/conversations/{{ conv.id }}">{{ conv.external_id }}</a>
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/tasks" class="px-3 py-2 rounded-xl border bg-white text-sm">返回任务列表</a>
+    {% if user.role in ['admin','supervisor'] %}
+      <form method="post" action="/tasks/{{ task.id }}/close">
+        <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">关闭任务</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <h2 class="font-semibold mb-3">原始对话</h2>
+    <div class="space-y-2">
+      {% for m in msgs %}
+        <div class="p-3 rounded-xl border {% if m.sender == 'agent' %}bg-slate-50{% elif m.sender == 'buyer' %}bg-white{% else %}bg-slate-100{% endif %}">
+          <div class="text-xs text-slate-500 flex items-center justify-between">
+            <span>{{ m.sender }}</span>
+            <span>{% if m.ts %}{{ m.ts.strftime("%Y-%m-%d %H:%M:%S") }}{% endif %}</span>
+          </div>
+          <div class="mt-1 whitespace-pre-wrap text-sm">{{ m.text }}</div>
+        </div>
+      {% endfor %}
+      {% if msgs|length == 0 %}
+        <div class="text-sm text-slate-500">暂无消息</div>
+      {% endif %}
+    </div>
+
+    <div class="mt-4">
+      <h2 class="font-semibold mb-2">AI提示（最新质检输出）</h2>
+      {% if analyses|length > 0 %}
+        {% set a = analyses[0] %}
+        <div class="border rounded-xl p-3 {% if a.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
+          <div class="flex items-center justify-between">
+            <div class="font-medium text-sm">{{ a.dialog_type or "对话" }}</div>
+            {% if a.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
+          </div>
+
+          <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div>
+              <div class="text-xs text-slate-500">售前负面标签</div>
+              <div class="whitespace-pre-wrap">{{ a.pre_negative_tags or "-" }}</div>
+            </div>
+            <div>
+              <div class="text-xs text-slate-500">售后负面标签</div>
+              <div class="whitespace-pre-wrap">{{ a.after_negative_tags or "-" }}</div>
+            </div>
+          </div>
+
+          {% if a.tag_parsing %}
+            <div class="mt-2 text-xs text-slate-500">评价解析</div>
+            <ul class="list-disc pl-5 text-sm">
+              {% for part in a.tag_parsing.split('&&&') %}
+                {% set seg = part.split('$$$') %}
+                <li><span class="font-medium">{{ seg[0] }}</span>{% if seg|length > 1 and seg[1] %}<span class="text-slate-600">：{{ seg[1] }}</span>{% endif %}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          <div class="mt-2 text-xs text-slate-500">服务提升建议</div>
+          <div class="text-sm whitespace-pre-wrap">{{ a.service_suggestion or "-" }}</div>
+        </div>
+      {% else %}
+        <div class="text-sm text-slate-500">暂无AI质检输出</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="space-y-4">
+    <div class="bg-white border rounded-2xl p-4" id="learning">
+      <h2 class="font-semibold mb-3">本任务的学习路径</h2>
+      <div class="text-sm text-slate-600 space-y-2">
+        <div class="p-3 rounded-xl border bg-slate-50">
+          <div class="font-medium">自我学习</div>
+          <div class="text-xs text-slate-500 mt-1">阅读左侧 AI 诊断原因 + 主管/管理员留言，弄清楚“问题是什么、为什么、下次怎么做”。</div>
+        </div>
+
+        {% if user.role in ['admin','supervisor'] %}
+          <form method="post" action="/tasks/{{ task.id }}/focus" class="p-3 rounded-xl border">
+            <div class="text-xs text-slate-500 mb-1">主管/管理员：选择本任务聚焦的负面标签</div>
+            <div class="flex gap-2">
+              <input name="focus_negative_tag" value="{{ task.focus_negative_tag }}" placeholder="例如：未及时回复 / 推诿 / 尺码不专业" class="flex-1 border rounded-xl px-3 py-2 text-sm" />
+              <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">保存</button>
+            </div>
+          </form>
+        {% else %}
+          <div class="p-3 rounded-xl border">
+            <div class="text-xs text-slate-500">本任务聚焦负面标签</div>
+            <div class="text-sm mt-1">{{ task.focus_negative_tag or '未指定（等待主管设置）' }}</div>
+          </div>
+        {% endif %}
+
+        <div class="p-3 rounded-xl border" id="rewrite">
+          <div class="font-medium">改写练习</div>
+          <div class="text-xs text-slate-500 mt-1">写一段“你认为更好的回复”（可直接复制给顾客的版本）。</div>
+          {% if user.role == 'agent' and task.assigned_to_user_id != user.id %}
+            <div class="text-sm text-slate-500 mt-2">该任务未指派给你</div>
+          {% else %}
+            <form method="post" action="/tasks/{{ task.id }}/submit" class="mt-2 space-y-2">
+              <textarea name="attempt_text" rows="7" class="w-full border rounded-xl px-3 py-2" placeholder="请写一段更好的回复（尽量包含：同理心+关键信息+下一步）" required></textarea>
+              <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">提交改写</button>
+            </form>
+          {% endif %}
+        </div>
+
+        <div class="p-3 rounded-xl border" id="reflection">
+          <div class="font-medium">自我思考（AI出题 + AI审核）</div>
+          <div class="text-xs text-slate-500 mt-1">先生成 1 个题目，再写你的完整思考逻辑，提交后由 AI 判断是否过关。</div>
+
+          <div class="mt-2">
+            <form method="post" action="/tasks/{{ task.id }}/reflection/question">
+              <button class="px-3 py-2 rounded-xl border bg-white text-sm">生成自我思考题</button>
+            </form>
+          </div>
+
+          {% if task.reflection_question %}
+            <div class="mt-3 border rounded-xl p-3 bg-slate-50">
+              <div class="text-xs text-slate-500">题目</div>
+              <div class="text-sm whitespace-pre-wrap mt-1">{{ task.reflection_question }}</div>
+            </div>
+
+            <form method="post" action="/tasks/{{ task.id }}/reflection/submit" class="mt-3 space-y-2">
+              <textarea name="answer" rows="6" class="w-full border rounded-xl px-3 py-2" placeholder="请写：原因复盘 + 错误点 + 可执行改进 + 一句可复制的话术" required></textarea>
+              <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">提交并让AI审核</button>
+            </form>
+          {% endif %}
+
+          {% if reflections|length > 0 %}
+            {% set r = reflections[0] %}
+            <div class="mt-3 border rounded-xl p-3">
+              <div class="flex items-center justify-between">
+                <div class="text-sm font-medium">最近一次AI审核</div>
+                {% if r.ai_passed is not none %}
+                  <div class="text-xs px-2 py-1 rounded-full {% if r.ai_passed %}bg-green-100{% else %}bg-red-100{% endif %}">
+                    {% if r.ai_passed %}通过{% else %}未通过{% endif %}{% if r.ai_score is not none %} · {{ r.ai_score }}{% endif %}
+                  </div>
+                {% endif %}
+              </div>
+              <div class="mt-2 text-xs text-slate-500">AI反馈</div>
+              <div class="text-sm whitespace-pre-wrap">{{ r.ai_feedback or '-' }}</div>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="p-3 rounded-xl border" id="simulate">
+          <div class="font-medium">模拟测试（与AI对练）</div>
+          <div class="text-xs text-slate-500 mt-1">围绕聚焦负面标签，进行多轮对话练习。</div>
+
+          <div class="mt-2 flex gap-2">
+            <form method="post" action="/tasks/{{ task.id }}/simulate/start">
+              <button class="px-3 py-2 rounded-xl border bg-white text-sm">开始/继续模拟</button>
+            </form>
+          </div>
+
+          {% if simulation_messages and simulation_messages|length > 0 %}
+            <div class="mt-3 space-y-2 max-h-72 overflow-auto">
+              {% for m in simulation_messages %}
+                {% if m.role == 'system' %}
+                  <div class="text-xs text-slate-500">{{ m.content }}</div>
+                {% elif m.role == 'user' %}
+                  <div class="flex justify-end">
+                    <div class="max-w-[85%] p-3 rounded-2xl bg-slate-900 text-white text-sm whitespace-pre-wrap">{{ m.content }}</div>
+                  </div>
+                {% else %}
+                  <div class="flex justify-start">
+                    <div class="max-w-[85%] p-3 rounded-2xl bg-white border text-sm whitespace-pre-wrap">{{ m.content }}</div>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+
+            <form method="post" action="/tasks/{{ task.id }}/simulate/send" class="mt-3 flex gap-2">
+              <input name="message" class="flex-1 border rounded-xl px-3 py-2 text-sm" placeholder="输入你作为客服要说的话…" required />
+              <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">发送</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if task.notes %}
+        <div class="mt-4 text-sm">
+          <div class="text-xs text-slate-500">主管/管理员留言</div>
+          <div class="whitespace-pre-wrap">{{ task.notes }}</div>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="bg-white border rounded-2xl p-4">
+      <h2 class="font-semibold mb-3">历史提交</h2>
+      {% if attempts|length == 0 %}
+        <div class="text-sm text-slate-500">暂无提交</div>
+      {% endif %}
+
+      <div class="space-y-3">
+        {% for a in attempts %}
+          {% set who = users.get(a.attempt_by_user_id) %}
+          {% set reviewer = users.get(a.reviewed_by_user_id) %}
+          <div class="border rounded-xl p-3">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-medium">{{ who.name if who else a.attempt_by_user_id }} · {{ a.created_at.strftime("%Y-%m-%d %H:%M") }}</div>
+              {% if a.review_score is not none %}
+                <div class="text-xs px-2 py-1 rounded-full bg-slate-100">评分：{{ a.review_score }}</div>
+              {% endif %}
+            </div>
+            <div class="mt-2 whitespace-pre-wrap text-sm">{{ a.attempt_text }}</div>
+
+            {% if a.review_score is not none %}
+              <div class="mt-2 text-xs text-slate-500">主管反馈（{{ reviewer.name if reviewer else '-' }}）</div>
+              <div class="text-sm whitespace-pre-wrap">{{ a.review_notes }}</div>
+            {% endif %}
+
+            {% if user.role in ['admin','supervisor'] and a.review_score is none %}
+              <form method="post" action="/tasks/{{ task.id }}/review" class="mt-3 border-t pt-3 space-y-2">
+                <input type="hidden" name="attempt_id" value="{{ a.id }}" />
+                <div class="flex gap-2">
+                  <div class="flex-1">
+                    <label class="block text-xs text-slate-500 mb-1">评分(0-100)</label>
+                    <input type="number" min="0" max="100" name="score" class="w-full border rounded-xl px-3 py-2 text-sm" required />
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs text-slate-500 mb-1">反馈</label>
+                  <textarea name="review_notes" rows="3" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="指出优点、需要改进、以及一两句可复制的话术"></textarea>
+                </div>
+                <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">提交评分与反馈</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

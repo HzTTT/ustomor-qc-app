@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">标签报表</h1>
+    <div class="text-sm text-slate-500 mt-1">统计口径：每个对话取“最新一条 AI质检”里的命中标签。</div>
+  </div>
+  {% if user.role in ["admin", "supervisor"] %}
+    <a href="/settings/tags" class="px-3 py-2 rounded-xl bg-white border text-sm hover:bg-slate-50">去标签管理</a>
+  {% endif %}
+</div>
+
+{% if flash %}
+  <div class="mb-4 p-3 rounded-xl border bg-slate-900 text-white text-sm">{{ flash }}</div>
+{% endif %}
+
+<div class="bg-white border rounded-2xl p-4">
+  <form method="get" action="/reports/tags" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">时间维度</label>
+      <select name="time_mode" class="w-full border rounded-xl px-3 py-2 text-sm">
+        {% for k, label in time_modes %}
+          <option value="{{ k }}" {% if k == filters.time_mode %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">日期/起始</label>
+      <input type="date" name="start" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">结束</label>
+      <input type="date" name="end" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">平台</label>
+      <select name="platform" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="">全部</option>
+        {% for p in platform_options %}
+          <option value="{{ p }}" {% if p == filters.platform %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">站内客服</label>
+      <select name="agent_user_id" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="">全部</option>
+        {% for u in agent_options %}
+          <option value="{{ u.id }}" {% if (filters.agent_user_id|string) == (u.id|string) %}selected{% endif %}>{{ u.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="flex items-end gap-2">
+      <label class="text-sm"><input type="checkbox" name="yoy" value="1" {% if filters.yoy %}checked{% endif %} /> 同比</label>
+      <button class="flex-1 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">刷新</button>
+    </div>
+  </form>
+
+  <div class="mt-4 text-xs text-slate-500">
+    当前周期：{{ period.current_label }}{% if period.prev_label %}（环比：{{ period.prev_label }}）{% endif %}{% if period.yoy_label %}（同比：{{ period.yoy_label }}）{% endif %}
+  </div>
+</div>
+
+<div class="mt-4 bg-white border rounded-2xl p-4">
+  {% if table_rows|length == 0 %}
+    <div class="text-sm text-slate-500">暂无数据（可能是还没有AI命中标签，或筛选条件过窄）</div>
+  {% else %}
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="text-left border-b">
+            <th class="py-2 pr-4">维度</th>
+            <th class="py-2 pr-4">一级分类</th>
+            <th class="py-2 pr-4">二级标签</th>
+            <th class="py-2 pr-4">对话数</th>
+            <th class="py-2 pr-4">环比</th>
+            <th class="py-2 pr-4">同比</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in table_rows %}
+            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %}">
+              <td class="py-2 pr-4">
+                {% if r.is_header %}
+                  <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')">
+                    <span id="ico-{{ r.group_id }}">▾</span> {{ r.group_label }}
+                  </button>
+                {% else %}
+                  <div class="pl-5" data-group="{{ r.group_id }}">{{ r.group_label }}</div>
+                {% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.category_name }}</span>{% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}
+                  <span class="text-slate-400">—</span>
+                {% else %}
+                  <button type="button" class="underline" data-rule-title="{{ r.tag_name }}" data-rule-text="{{ r.tag_standard }}" onclick="showRule(this)">{{ r.tag_name }}</button>
+                {% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.current }}</span>{% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.mom }}</span>{% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.yoy }}</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+
+<!-- Rule popup -->
+<div id="rule-modal" class="fixed inset-0 hidden items-center justify-center bg-black/40 z-50">
+  <div class="bg-white rounded-2xl p-4 w-full max-w-lg border">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div id="rule-title" class="font-semibold"></div>
+        <div class="text-xs text-slate-500 mt-1">这是给AI的命中标准（管理者可以在“标签管理”里修改）</div>
+      </div>
+      <button type="button" class="px-3 py-1.5 rounded-lg bg-white border text-sm" onclick="closeRule()">关闭</button>
+    </div>
+    <div id="rule-text" class="mt-3 text-sm whitespace-pre-wrap"></div>
+  </div>
+</div>
+
+<script>
+  function toggleGroup(groupId) {
+    const rows = document.querySelectorAll('[data-group="' + groupId + '"]');
+    const ico = document.getElementById('ico-' + groupId);
+    if (!rows || rows.length === 0) return;
+    const hidden = rows[0].classList.contains('hidden');
+    rows.forEach(r => r.classList.toggle('hidden', !hidden));
+    if (ico) ico.textContent = hidden ? '▾' : '▸';
+  }
+  function showRule(btn) {
+    const title = btn.getAttribute('data-rule-title') || '判定标准';
+    const text = btn.getAttribute('data-rule-text') || '未配置';
+    document.getElementById('rule-title').textContent = title;
+    document.getElementById('rule-text').textContent = text;
+    const modal = document.getElementById('rule-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+  }
+  function closeRule() {
+    const modal = document.getElementById('rule-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+  document.getElementById('rule-modal').addEventListener('click', function(e){
+    if (e.target && e.target.id === 'rule-modal') closeRule();
+  });
+</script>
+
+{% endblock %}

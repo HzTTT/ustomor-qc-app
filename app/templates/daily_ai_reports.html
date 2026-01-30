@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-6xl mx-auto space-y-4">
+  <div class="flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-semibold">每日AI总结 · 历史报告</h1>
+      <div class="text-sm text-slate-500 mt-1">按日期查看已保存的管理者日报（支持导出 TXT）。</div>
+    </div>
+    <a href="/settings/ai/daily" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">去生成/更新</a>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    {% if not reports %}
+      <div class="text-sm text-slate-600">还没有生成过报告。</div>
+    {% else %}
+      <div class="overflow-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-slate-500">
+              <th class="py-2 pr-3">日期</th>
+              <th class="py-2 pr-3">纳入对话</th>
+              <th class="py-2 pr-3">纳入消息</th>
+              <th class="py-2 pr-3">模型</th>
+              <th class="py-2 pr-3">生成时间</th>
+              <th class="py-2 pr-3">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in reports %}
+              <tr class="border-t">
+                <td class="py-2 pr-3 font-mono">
+                  <a class="underline" href="/reports/daily-ai/{{ r.run_date }}">{{ r.run_date }}</a>
+                </td>
+                <td class="py-2 pr-3">{{ r.included_conversations }}</td>
+                <td class="py-2 pr-3">{{ r.included_messages }}</td>
+                <td class="py-2 pr-3 font-mono break-all">{{ r.model or "-" }}</td>
+                <td class="py-2 pr-3 text-slate-600">{{ (r.created_at or "") }}</td>
+                <td class="py-2 pr-3">
+                  <a class="underline mr-3" href="/reports/daily-ai/{{ r.run_date }}">查看</a>
+                  <a class="underline" href="/reports/daily-ai/{{ r.run_date }}/export">导出TXT</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

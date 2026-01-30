@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">AI质检</h1>
+    <div class="text-sm text-slate-500 mt-1">筛选时间范围内、消息数≥{{ threshold_messages }} 的对话，默认已帮你圈选可质检的对话。</div>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/conversations" class="px-3 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">聊天记录</a>
+  </div>
+</div>
+
+{% if ok %}
+  <div class="mb-4 px-4 py-2 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm">{{ ok }}</div>
+{% endif %}
+{% if error %}
+  <div class="mb-4 px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">{{ error }}</div>
+{% endif %}
+
+<div class="bg-white border rounded-2xl p-4 mb-6">
+  <form method="get" action="/qc/daily" class="flex flex-wrap items-end gap-3">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">开始日期</label>
+      <input type="date" name="start_date" value="{{ start_date }}" class="px-3 py-2 rounded-xl border" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">结束日期</label>
+      <input type="date" name="end_date" value="{{ end_date }}" class="px-3 py-2 rounded-xl border" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">消息数阈值</label>
+      <input type="number" name="min_messages" value="{{ threshold_messages }}" min="1" max="500" class="px-3 py-2 rounded-xl border w-28" />
+    </div>
+    <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
+  </form>
+</div>
+
+<form method="post" action="/qc/daily/batch" id="qc-batch-form">
+  <input type="hidden" name="start_date" value="{{ start_date }}" />
+  <input type="hidden" name="end_date" value="{{ end_date }}" />
+  <input type="hidden" name="min_messages" value="{{ threshold_messages }}" />
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    <button type="button" id="select-all" class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">全选</button>
+    <button type="button" id="invert" class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">反选</button>
+    <span class="text-sm text-slate-500">圈选：按住 Shift 点击行可连续勾选</span>
+    <button type="submit" id="submit-batch" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">批量质检</button>
+  </div>
+
+  <div class="bg-white border rounded-2xl overflow-hidden">
+    <table class="w-full text-sm" id="qc-table">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="text-left px-4 py-3 w-10">
+            <input type="checkbox" id="head-cb" title="全选" />
+          </th>
+          <th class="text-left px-4 py-3">对话</th>
+          <th class="text-left px-4 py-3">平台</th>
+          <th class="text-left px-4 py-3">消息数</th>
+          <th class="text-left px-4 py-3">状态</th>
+          <th class="text-left px-4 py-3">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in convos %}
+          <tr class="border-t qc-row" data-id="{{ c.id }}">
+            <td class="px-4 py-3">
+              <input type="checkbox" name="conversation_ids" value="{{ c.id }}" class="qc-cb" {% if c.id in pending_ids %}disabled{% else %}checked{% endif %} />
+            </td>
+            <td class="px-4 py-3 font-mono text-slate-700">{{ c.external_id or c.id }}</td>
+            <td class="px-4 py-3 text-slate-600">{{ c.platform or '-' }}</td>
+            <td class="px-4 py-3">{{ rounds_by_conv.get(c.id, 0) }}</td>
+            <td class="px-4 py-3">
+              {% if c.id in pending_ids %}
+                <span class="text-amber-600 text-xs">待质检</span>
+              {% else %}
+                <span class="text-slate-400 text-xs">可选</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              <a href="/conversations/{{ c.id }}" class="text-sky-600 hover:underline text-xs">查看</a>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if convos|length == 0 %}
+          <tr class="border-t">
+            <td colspan="6" class="px-4 py-6 text-slate-500">该时间范围内暂无消息数≥{{ threshold_messages }} 的对话</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</form>
+
+<script>
+(function () {
+  const form = document.getElementById('qc-batch-form');
+  const headCb = document.getElementById('head-cb');
+  const selectAllBtn = document.getElementById('select-all');
+  const invertBtn = document.getElementById('invert');
+  const rows = document.querySelectorAll('.qc-row');
+  const cbs = document.querySelectorAll('.qc-cb:not([disabled])');
+
+  function updateHeadCb() {
+    if (!headCb) return;
+    const enabled = document.querySelectorAll('.qc-cb:not([disabled])');
+    const checked = document.querySelectorAll('.qc-cb:not([disabled]):checked');
+    headCb.checked = enabled.length > 0 && checked.length === enabled.length;
+    headCb.indeterminate = checked.length > 0 && checked.length < enabled.length;
+  }
+
+  if (headCb) {
+    headCb.addEventListener('change', function () {
+      cbs.forEach(function (cb) { cb.checked = headCb.checked; });
+    });
+  }
+
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', function () {
+      cbs.forEach(function (cb) { cb.checked = true; });
+      if (headCb) headCb.checked = true;
+      headCb && (headCb.indeterminate = false);
+    });
+  }
+
+  if (invertBtn) {
+    invertBtn.addEventListener('click', function () {
+      cbs.forEach(function (cb) { cb.checked = !cb.checked; });
+      updateHeadCb();
+    });
+  }
+
+  var lastShiftRow = null;
+  rows.forEach(function (row) {
+    const cb = row.querySelector('.qc-cb');
+    if (!cb || cb.disabled) return;
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', function (e) {
+      if (e.target.tagName === 'A' || e.target.tagName === 'INPUT') return;
+      if (e.shiftKey && lastShiftRow != null) {
+        e.preventDefault();
+        var r = Array.prototype.indexOf.call(rows, row);
+        var l = Array.prototype.indexOf.call(rows, lastShiftRow);
+        var lo = Math.min(r, l), hi = Math.max(r, l);
+        for (var i = lo; i <= hi; i++) {
+          var c = rows[i].querySelector('.qc-cb');
+          if (c && !c.disabled) c.checked = true;
+        }
+        updateHeadCb();
+        return;
+      }
+      lastShiftRow = row;
+      cb.checked = !cb.checked;
+      updateHeadCb();
+    });
+  });
+
+  cbs.forEach(function (cb) {
+    cb.addEventListener('change', updateHeadCb);
+  });
+
+  if (form) {
+    form.addEventListener('submit', function (e) {
+      var n = document.querySelectorAll('.qc-cb:checked').length;
+      if (n === 0) {
+        e.preventDefault();
+        alert('请至少勾选一条对话');
+        return false;
+      }
+    });
+  }
+
+  updateHeadCb();
+})();
+</script>
+{% endblock %}

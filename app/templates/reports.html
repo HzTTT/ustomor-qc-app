@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">报表</h1>
+    <div class="text-sm text-slate-500 mt-1">围绕 4 个核心：接待正向结果 · 接待负向结果 · 错误复盘/专题培训 · VOC</div>
+  </div>
+</div>
+<div class="bg-white border rounded-2xl p-4 mb-4">
+  <div class="flex items-center justify-between gap-3">
+    <div>
+      <div class="text-sm font-medium">每日AI总结（管理者日报）</div>
+      <div class="text-xs text-slate-500 mt-1">按日期查看已保存的每日总结，也可以导出 TXT。</div>
+    </div>
+    <a href="/reports/daily-ai" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">打开</a>
+  </div>
+</div>
+
+<div class="bg-white border rounded-2xl p-4 mb-4">
+  <div class="flex items-center justify-between gap-3">
+    <div>
+      <div class="text-sm font-medium">标签报表（按AI命中标签统计）</div>
+      <div class="text-xs text-slate-500 mt-1">支持按时间/平台/站内客服查看，包含环比与可选同比。</div>
+    </div>
+    <a href="/reports/tags" class="px-4 py-2 rounded-xl bg-white border text-sm hover:bg-slate-50">打开</a>
+  </div>
+</div>
+
+<div class="bg-white border rounded-2xl p-4 mb-4">
+  <form method="get" action="/reports" class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">开始日期</label>
+      <input type="date" name="start" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">结束日期</label>
+      <input type="date" name="end" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">平台</label>
+      <select name="platform" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="">全部</option>
+        {% for p in platforms %}
+          <option value="{{ p }}" {% if filters.platform == p %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">标签/关键词</label>
+      <input type="text" name="tag" value="{{ filters.tag }}" placeholder="例如：未及时回复 / 尺码 / 退款" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">客服筛选</label>
+      {% if user.role == 'agent' %}
+        <input type="text" value="{{ user.name }}" disabled class="w-full border rounded-xl px-3 py-2 text-sm bg-slate-50" />
+      {% else %}
+        <select name="agent_id" class="w-full border rounded-xl px-3 py-2 text-sm">
+          <option value="">团队(全部)</option>
+          {% for a in agents %}
+            <option value="{{ a.id }}" {% if filters.agent_id == a.id %}selected{% endif %}>{{ a.name }} ({{ a.username }})</option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+
+    <div>
+      <button class="w-full px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">刷新</button>
+    </div>
+  </form>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="text-xs text-slate-500">接待正向结果</div>
+    <div class="text-2xl font-semibold mt-1">{{ stats.positive }}</div>
+    <div class="text-xs text-slate-500 mt-1">/ {{ stats.total }} 条对话</div>
+  </div>
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="text-xs text-slate-500">接待负向结果</div>
+    <div class="text-2xl font-semibold mt-1">{{ stats.negative }}</div>
+    <div class="text-xs text-slate-500 mt-1">含需复核/负面标签</div>
+  </div>
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="text-xs text-slate-500">错误复盘 / 培训</div>
+    <div class="text-2xl font-semibold mt-1">{{ stats.tasks }}</div>
+    <div class="text-xs text-slate-500 mt-1">已点评/关闭 {{ stats.tasks_reviewed }} · 反思通过 {{ stats.reflections_passed }}/{{ stats.reflections }}</div>
+  </div>
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="text-xs text-slate-500">VOC (商品/服务)</div>
+    <div class="text-2xl font-semibold mt-1">{{ stats.voc }}</div>
+    <div class="text-xs text-slate-500 mt-1">有建议/吐槽的对话</div>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold">1) 接待正向结果（示例）</h2>
+      <a class="text-sm underline" href="/conversations?start={{ filters.start }}&end={{ filters.end }}&platform={{ filters.platform }}&agent_id={{ filters.agent_id }}&tag={{ filters.tag }}">查看全部聊天记录</a>
+    </div>
+    <div class="space-y-2">
+      {% for c in positive_convos %}
+        {% set a = latest_by_conv.get(c.id) %}
+        <div class="border rounded-xl p-3">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
+            <div class="text-xs text-slate-500">{{ c.uploaded_at.strftime('%Y-%m-%d') if c.uploaded_at else '' }} · {{ c.platform or '-' }}</div>
+          </div>
+          <div class="mt-1 text-xs text-slate-500">正向标签</div>
+          <div class="text-sm whitespace-pre-wrap">{{ (a.after_positive_tags or a.pre_positive_tags) or '-' }}</div>
+        </div>
+      {% endfor %}
+      {% if positive_convos|length == 0 %}
+        <div class="text-sm text-slate-500">暂无</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold">2) 接待负向结果（示例）</h2>
+      <a class="text-sm underline" href="/conversations?only_flagged=1">仅看需复核</a>
+    </div>
+    <div class="space-y-2">
+      {% for c in negative_convos %}
+        {% set a = latest_by_conv.get(c.id) %}
+        <div class="border rounded-xl p-3 {% if a and a.flag_for_review %}bg-red-50{% endif %}">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
+            <div class="text-xs text-slate-500">{{ c.uploaded_at.strftime('%Y-%m-%d') if c.uploaded_at else '' }} · {{ c.platform or '-' }}</div>
+          </div>
+          <div class="mt-1 text-xs text-slate-500">负向标签</div>
+          <div class="text-sm whitespace-pre-wrap">{{ (a.after_negative_tags or a.pre_negative_tags) or '-' }}</div>
+          {% if user.role in ['admin','supervisor'] %}
+            <div class="mt-2">
+              <a class="text-sm underline" href="/conversations/{{ c.id }}#create_task">生成训练任务</a>
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+      {% if negative_convos|length == 0 %}
+        <div class="text-sm text-slate-500">暂无</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold">3) 错误复盘 / 专题培训（最近）</h2>
+      <a class="text-sm underline" href="/tasks">进入训练任务</a>
+    </div>
+    <div class="space-y-2">
+      {% for t in tasks %}
+        <div class="border rounded-xl p-3">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium"><a class="underline" href="/tasks/{{ t.id }}">任务 #{{ t.id }}</a></div>
+            <div class="text-xs text-slate-500">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '' }} · {{ t.status }}</div>
+          </div>
+          <div class="text-xs text-slate-500 mt-1">聚焦负面标签</div>
+          <div class="text-sm">{{ t.focus_negative_tag or '-' }}</div>
+        </div>
+      {% endfor %}
+      {% if tasks|length == 0 %}
+        <div class="text-sm text-slate-500">暂无</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold">4) VOC（商品/服务优缺点）</h2>
+      <div class="text-xs text-slate-500">点击可回到对应对话</div>
+    </div>
+    <div class="space-y-2">
+      {% for it in voc_items %}
+        {% set c = it.conv %}
+        {% set a = it.analysis %}
+        <div class="border rounded-xl p-3">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
+            <div class="text-xs text-slate-500">{{ c.platform or '-' }}</div>
+          </div>
+          {% if a.product_suggestion %}
+            <div class="mt-2 text-xs text-slate-500">商品</div>
+            <div class="text-sm whitespace-pre-wrap">{{ a.product_suggestion }}</div>
+          {% endif %}
+          {% if a.service_suggestion %}
+            <div class="mt-2 text-xs text-slate-500">服务</div>
+            <div class="text-sm whitespace-pre-wrap">{{ a.service_suggestion }}</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+      {% if voc_items|length == 0 %}
+        <div class="text-sm text-slate-500">暂无</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="mt-6 text-xs text-slate-500">
+  说明：这是 MVP 报表。后续可以把 “团队/个人/平台/时间” 的所有指标进一步做成可下载的表格、趋势图、以及可配置的专题培训看板。
+</div>
+{% endblock %}

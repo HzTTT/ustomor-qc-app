@@ -1,0 +1,110 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      # IMPORTANT: if you already have an existing db volume, these values must
+      # match the roles created during the FIRST init.
+      # We pin to qc to avoid accidental .env overrides causing
+      # "role postgres does not exist".
+      POSTGRES_USER: qc
+      POSTGRES_PASSWORD: qc
+      POSTGRES_DB: qc
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./qc_2026-01-30_12-53.dump:/docker-entrypoint-initdb.d/restore.dump
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    ports:
+      - "5433:5432"   # host 5433 to avoid conflict with local Postgres on 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qc -d qc"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: ./app
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # DB: we do NOT read DATABASE_URL by default to avoid old .env breaking
+      # an existing Postgres volume.
+      USE_POSTGRES_ENV: "1"
+      DB_HOST: db
+      DB_PORT: "5432"
+      POSTGRES_USER: qc
+      POSTGRES_PASSWORD: qc
+      POSTGRES_DB: qc
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-in-prod}
+      SEED_DEMO: ${SEED_DEMO:-1}
+      OPEN_REGISTRATION: ${OPEN_REGISTRATION:-0}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-Sean}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-Sean}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-0357zaqxswcde}
+      # AI / Relay
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://www.marllen.com:4000/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-chatgpt-5.1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-1800}
+      OPENAI_RETRIES: ${OPENAI_RETRIES:-0}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
+    volumes:
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build:
+      context: ./app
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      USE_POSTGRES_ENV: "1"
+      DB_HOST: db
+      DB_PORT: "5432"
+      POSTGRES_USER: qc
+      POSTGRES_PASSWORD: qc
+      POSTGRES_DB: qc
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-in-prod}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://www.marllen.com:4000/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-chatgpt-5.1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-1800}
+      OPENAI_RETRIES: ${OPENAI_RETRIES:-0}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
+    volumes:
+      - ./data:/data
+    command: ["python", "worker.py"]
+
+  cron:
+    build:
+      context: ./app
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      USE_POSTGRES_ENV: "1"
+      DB_HOST: db
+      DB_PORT: "5432"
+      POSTGRES_USER: qc
+      POSTGRES_PASSWORD: qc
+      POSTGRES_DB: qc
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-in-prod}
+      ENABLE_BUCKET_IMPORT: ${ENABLE_BUCKET_IMPORT:-0}
+      ENABLE_ENQUEUE_ANALYSIS: ${ENABLE_ENQUEUE_ANALYSIS:-1}
+      CRON_INTERVAL_SECONDS: ${CRON_INTERVAL_SECONDS:-600}
+    volumes:
+      - ./data:/data
+    command: ["python", "cron_runner.py"]
+
+# volumes:
+  # db_data:  # 不再使用 Docker volume，改用本地目录挂载

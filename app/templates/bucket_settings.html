@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">桶抓取 / 导入配置</h1>
+    <div class="text-sm text-slate-500 mt-1">这里用于控制每日轮巡抓取、手动触发导入，以及快速复制日志排查问题。<span class="ml-2 text-xs text-slate-400">Build: 2026-01-23</span></div>
+  </div>
+  <a href="/dashboard" class="px-3 py-2 rounded-xl border bg-white text-sm">回到同步概览</a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+  <div class="bg-white border rounded-2xl p-4">
+    <h2 class="font-semibold mb-3">开关与计划</h2>
+
+    {% if saved %}
+      <div class="mb-3 px-3 py-2 rounded-xl border bg-green-50 text-green-800 text-sm">已保存</div>
+    {% endif %}
+
+    <form method="post" action="/settings/bucket" class="space-y-4">
+      <input type="hidden" name="action" value="save" />
+
+      <div class="space-y-2">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="bucket_fetch_enabled" value="1" {% if s.bucket_fetch_enabled %}checked{% endif %} />
+          启用每日轮巡抓取（到点自动检查“昨天”）
+        </label>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">每日轮巡时间（上海）</label>
+            <input name="bucket_daily_check_time" value="{{ s.bucket_daily_check_time }}" placeholder="10:15" class="w-full px-3 py-2 rounded-xl border" />
+            <div class="text-xs text-slate-500 mt-1">格式 HH:MM，例如 10:15</div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">未抓到时重试间隔（分钟）</label>
+            <input name="bucket_retry_interval_minutes" value="{{ s.bucket_retry_interval_minutes }}" type="number" min="5" class="w-full px-3 py-2 rounded-xl border" />
+            <div class="text-xs text-slate-500 mt-1">例如 60 = 每小时重试</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="taobao_bucket_import_enabled" value="1" {% if s.taobao_bucket_import_enabled %}checked{% endif %} />
+            启用淘宝（阿里 OSS）抓取
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="douyin_bucket_import_enabled" value="1" {% if s.douyin_bucket_import_enabled %}checked{% endif %} />
+            启用抖音（TOS）抓取
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">日志保留条数</label>
+          <input name="bucket_log_keep" value="{{ s.bucket_log_keep }}" type="number" min="100" max="5000" class="w-full px-3 py-2 rounded-xl border" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">本地备份目录（容器内路径）</label>
+          <input name="bucket_backup_dir" value="{{ s.bucket_backup_dir }}" placeholder="/data/bucket_backup" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          <div class="text-xs text-slate-500 mt-1">docker 挂载 ./data 到 /data</div>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">飞书 Webhook URL</label>
+          <input name="feishu_webhook_url" value="{{ s.feishu_webhook_url }}" placeholder="https://open.feishu.cn/..." class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          <div class="text-xs text-slate-500 mt-1">抓取开始/成功/失败时通知；留空不通知</div>
+        </div>
+      </div>
+
+      <div class="border-t pt-4 mt-4">
+        <div class="text-sm font-medium mb-2">淘宝（阿里 OSS）S3 配置</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Bucket 名称</label>
+            <input name="taobao_bucket" value="{{ s.taobao_bucket_config.bucket or '' }}" placeholder="conversations-marllen-taobao" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">前缀（Prefix）</label>
+            <input name="taobao_prefix" value="{{ s.taobao_bucket_config.prefix or '' }}" placeholder="leyan" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">S3 Endpoint</label>
+            <input name="taobao_endpoint" value="{{ s.taobao_bucket_config.endpoint or '' }}" placeholder="https://oss-cn-shanghai.aliyuncs.com" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Region（可选）</label>
+            <input name="taobao_region" value="{{ s.taobao_bucket_config.region or '' }}" placeholder="cn-shanghai" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Access Key</label>
+            <input name="taobao_access_key" value="{{ s.taobao_bucket_config.access_key or '' }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">Secret Key</label>
+            <input type="password" name="taobao_secret_key" value="{{ s.taobao_bucket_config.secret_key or '' }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t pt-4 mt-4">
+        <div class="text-sm font-medium mb-2">抖音（火山引擎 TOS）S3 配置</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Bucket 名称</label>
+            <input name="douyin_bucket" value="{{ s.douyin_bucket_config.bucket or '' }}" placeholder="conversations-marllen-douyin" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">前缀（Prefix）</label>
+            <input name="douyin_prefix" value="{{ s.douyin_bucket_config.prefix or '' }}" placeholder="leyan" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">S3 Endpoint</label>
+            <input name="douyin_endpoint" value="{{ s.douyin_bucket_config.endpoint or '' }}" placeholder="https://tos-cn-beijing.volces.com" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Region（可选）</label>
+            <input name="douyin_region" value="{{ s.douyin_bucket_config.region or '' }}" placeholder="cn-beijing" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Access Key</label>
+            <input name="douyin_access_key" value="{{ s.douyin_bucket_config.access_key or '' }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">Secret Key</label>
+            <input type="password" name="douyin_secret_key" value="{{ s.douyin_bucket_config.secret_key or '' }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" autocomplete="off" />
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 pt-4">
+        <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">保存配置</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <h2 class="font-semibold mb-3">手动抓取（立即执行）</h2>
+
+    {% if run_result %}
+      <div class="mb-3 px-3 py-2 rounded-xl border bg-slate-50 text-slate-800 text-sm whitespace-pre-wrap">{{ run_result }}</div>
+    {% endif %}
+
+    <form method="post" action="/settings/bucket" class="space-y-3">
+      <input type="hidden" name="action" value="run" />
+
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">目标日期</label>
+        <input name="date" type="date" value="{{ default_date }}" class="w-full px-3 py-2 rounded-xl border" />
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="sources" value="TAOBAO" checked />
+          淘宝（阿里 OSS）
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="sources" value="DOUYIN" />
+          抖音（TOS）
+        </label>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">立即抓取并导入</button>
+        <div class="text-xs text-slate-500">会按 leyAn 目录结构：/leyan/YYYY-MM-DD/</div>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<div class="bg-white border rounded-2xl p-4 mt-4">
+  <div class="flex items-start justify-between gap-3 mb-3">
+    <div>
+      <h2 class="font-semibold">抓取缺失看板</h2>
+      <div class="text-xs text-slate-500 mt-1">按“平台 × 日期”展示：已抓取/缺失/异常，并带上当天的对话数与消息数，方便你快速补齐缺口。</div>
+    </div>
+    <form method="get" action="/settings/bucket" class="flex items-center gap-2">
+      <input name="from" type="date" value="{{ board_start }}" class="px-2 py-1 rounded-xl border text-sm" />
+      <span class="text-slate-400 text-sm">到</span>
+      <input name="to" type="date" value="{{ board_end }}" class="px-2 py-1 rounded-xl border text-sm" />
+      <select name="days" class="px-2 py-1 rounded-xl border text-sm">
+        {% for n in [7,14,30,60,90,120] %}
+          <option value="{{ n }}" {% if board_days == n %}selected{% endif %}>近 {{ n }} 天</option>
+        {% endfor %}
+      </select>
+      <button class="px-3 py-1.5 rounded-xl border bg-white text-sm">刷新</button>
+    </form>
+  </div>
+
+  <div class="overflow-auto border rounded-2xl">
+    <table class="min-w-[720px] w-full text-sm">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="text-left px-3 py-2 sticky left-0 bg-slate-50">日期</th>
+          {% for p in board.platforms %}
+            <th class="text-left px-3 py-2">{{ p }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in board.dates %}
+          <tr class="border-t">
+            <td class="px-3 py-2 sticky left-0 bg-white font-mono text-xs text-slate-700">{{ d }}</td>
+            {% for p in board.platforms %}
+              {% set cell = board.cells.get(d, {}).get(p) %}
+              {% set st = cell.status if cell else 'missing' %}
+              <td class="px-3 py-2">
+                {% if st == 'done' %}
+                  <div class="inline-flex items-center px-2 py-0.5 rounded-full bg-green-50 text-green-800 border text-xs">已抓取</div>
+                {% elif st == 'error' %}
+                  <div class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-50 text-red-800 border text-xs">异常</div>
+                {% else %}
+                  <div class="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-900 border text-xs">缺失</div>
+                {% endif %}
+
+                <div class="text-xs text-slate-600 mt-1">
+                  对话 {{ cell.conversations if cell else 0 }} · 消息 {{ cell.messages if cell else 0 }}
+                  <span class="text-slate-400">({{ cell.source if cell else '-' }})</span>
+                </div>
+
+                {% if st != 'done' %}
+                  <form method="post" action="/settings/bucket" class="mt-2">
+                    <input type="hidden" name="action" value="run" />
+                    <input type="hidden" name="date" value="{{ d }}" />
+                    <input type="hidden" name="sources" value="{{ 'TAOBAO' if p == 'taobao' else 'DOUYIN' }}" />
+                    <button class="px-2 py-1 rounded-xl border bg-white text-xs">补抓这一天</button>
+                  </form>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="text-xs text-slate-500 mt-2">
+    备注：如果历史数据在系统里已有对话/消息，但 ImportRun 还没写入，会显示为 <span class="px-1 rounded bg-slate-50 border">inferred</span>（由现有对话推断）。
+  </div>
+</div>
+
+<div class="bg-white border rounded-2xl p-4 mt-4">
+  <div class="flex items-center justify-between gap-3 mb-3">
+    <h2 class="font-semibold">日志（方便一键复制排查）</h2>
+    <div class="flex items-center gap-2">
+      <button id="copyLogs" class="px-3 py-2 rounded-xl border bg-white text-sm">复制全部日志</button>
+      <form method="post" action="/settings/bucket" onsubmit="return confirm('确定清空日志？');">
+        <input type="hidden" name="action" value="clear_logs" />
+        <button class="px-3 py-2 rounded-xl border bg-white text-sm">清空</button>
+      </form>
+    </div>
+  </div>
+
+  <textarea id="logsArea" class="w-full h-[320px] px-3 py-2 rounded-xl border font-mono text-xs whitespace-pre" readonly>{{ logs_text }}</textarea>
+  <div class="text-xs text-slate-500 mt-2">提示：这份日志来自 cron 的运行记录（会保留最近 N 条）。</div>
+</div>
+
+<script>
+  (function(){
+    const btn = document.getElementById('copyLogs');
+    const ta = document.getElementById('logsArea');
+    if (!btn || !ta) return;
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        await navigator.clipboard.writeText(ta.value || '');
+        btn.textContent = '已复制';
+        setTimeout(()=>{ btn.textContent = '复制全部日志'; }, 1200);
+      } catch (err) {
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        btn.textContent = '已复制';
+        setTimeout(()=>{ btn.textContent = '复制全部日志'; }, 1200);
+      }
+    });
+  })();
+</script>
+{% endblock %}

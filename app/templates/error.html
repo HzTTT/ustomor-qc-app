@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-xl mx-auto bg-white border rounded-2xl p-6">
+  <h1 class="text-xl font-semibold">提示</h1>
+  <p class="mt-2 text-sm text-slate-700">{{ message }}</p>
+  <div class="mt-4">
+    <a class="underline text-sm" href="javascript:history.back()">返回上一页</a>
+  </div>
+</div>
+{% endblock %}

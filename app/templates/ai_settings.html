@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center gap-2 mb-4">
+      <a href="/settings/ai" class="px-3 py-1.5 rounded-xl text-sm {% if active_tab == 'ai' %}bg-slate-900 text-white{% else %}bg-white border hover:bg-slate-50{% endif %}">AI配置</a>
+      <a href="/settings/ai/daily" class="px-3 py-1.5 rounded-xl text-sm {% if active_tab == 'daily' %}bg-slate-900 text-white{% else %}bg-white border hover:bg-slate-50{% endif %}">每日AI总结</a>
+    </div>
+
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-semibold">AI分析配置</h1>
+        <div class="mt-2 text-sm text-slate-600">
+          自动分析开关只影响“定时任务是否自动分析未分析对话”。管理员在对话详情页仍可随时“重新分析（覆盖）”。
+        </div>
+      </div>
+      <a href="/dashboard" class="px-3 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">同步概览</a>
+    </div>
+
+    <form method="post" action="/settings/ai" class="mt-4 border rounded-2xl p-4 bg-slate-50 space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-sm font-medium">自动分析（定时任务）</div>
+          <div class="text-xs text-slate-500 mt-1">关闭后：仍会同步入库，但不会自动生成 AIAnalysisJob；你可以手动对某条对话点“重新分析”。</div>
+        </div>
+        <label class="inline-flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="auto_analysis_enabled" value="on" {% if cfg.auto_analysis_enabled %}checked{% endif %} class="w-5 h-5" />
+          <span class="text-sm">启用</span>
+        </label>
+      </div>
+      <div>
+        <div class="text-sm font-medium">质检 System Prompt（可编辑部分）</div>
+        <div class="text-xs text-slate-500 mt-1">通用目的、标准等。系统会自动拼接三大块、数据与格式要求。</div>
+        <textarea name="qc_system_prompt" rows="6" class="mt-2 w-full text-sm font-mono border rounded-xl p-3" placeholder="例如：你是资深的女装电商客服质检与培训教练。目标：提升接待与产品质量…">{{ qc_editable_prompt or '' }}</textarea>
+      </div>
+      <div class="border-t pt-4">
+        <div class="text-sm font-medium mb-3">AI 连接（保存到系统设置）</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_BASE_URL</label>
+            <input name="openai_base_url" value="{{ base_url }}" placeholder="http://www.marllen.com:4000/v1" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_API_KEY</label>
+            <input type="password" name="openai_api_key" value="" placeholder="{% if openai_api_key %}留空不修改{% else %}请输入 API Key{% endif %}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" autocomplete="off" />
+            {% if openai_api_key %}<div class="text-xs text-slate-500 mt-1">已配置 {{ openai_api_key }}</div>{% endif %}
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_MODEL</label>
+            <input name="openai_model" value="{{ model }}" placeholder="gpt-5.2" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_FALLBACK_MODEL（可选）</label>
+            <input name="openai_fallback_model" value="{{ openai_fallback_model }}" placeholder="留空则自动回退" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_TIMEOUT（秒）</label>
+            <input name="openai_timeout" type="number" min="60" value="{{ timeout }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_RETRIES</label>
+            <input name="openai_retries" type="number" min="0" value="{{ openai_retries }}" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">OPENAI_REASONING_EFFORT</label>
+            <input name="openai_reasoning_effort" value="{{ openai_reasoning_effort }}" placeholder="high" class="w-full max-w-xs px-3 py-2 rounded-xl border font-mono text-sm" />
+          </div>
+        </div>
+      </div>
+      <div class="pt-2">
+        <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">保存</button>
+      </div>
+    </form>
+
+    <div class="mt-4">
+      <div class="text-sm font-medium">系统固定部分（只读）</div>
+      <pre class="mt-2 text-xs whitespace-pre-wrap bg-slate-900 text-slate-50 rounded-2xl p-3 overflow-auto">{{ qc_fixed_prompt }}</pre>
+    </div>
+
+    <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+      <div class="p-3 rounded-xl border bg-white">
+        <div class="text-xs text-slate-500">当前桶（淘宝）</div>
+        <div class="font-mono break-all">{{ bucket_name }}{% if bucket_prefix %}/{{ bucket_prefix }}{% endif %}{% if not bucket_name and not bucket_prefix %}未配置{% endif %}</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

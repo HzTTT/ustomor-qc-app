@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <h1 class="text-xl font-semibold">应用设置</h1>
+    <div class="text-sm text-slate-500 mt-1">开放注册、设置文件导出/导入。其余配置见 AI配置、桶抓取、标签管理等。</div>
+
+    {% if saved %}
+      <div class="mt-3 px-3 py-2 rounded-xl border bg-green-50 text-green-800 text-sm">已保存</div>
+    {% endif %}
+    {% if export_ok %}
+      <div class="mt-3 px-3 py-2 rounded-xl border bg-green-50 text-green-800 text-sm">已导出到 data/settings.json</div>
+    {% endif %}
+    {% if import_ok %}
+      <div class="mt-3 px-3 py-2 rounded-xl border bg-green-50 text-green-800 text-sm">已从文件导入并保存</div>
+    {% endif %}
+    {% if import_error %}
+      <div class="mt-3 px-3 py-2 rounded-xl border bg-red-50 text-red-800 text-sm">{{ import_error }}</div>
+    {% endif %}
+
+    <form method="post" action="/settings/general" class="mt-4 space-y-4">
+      <input type="hidden" name="action" value="save" />
+      <div class="flex items-center justify-between gap-3">
+        <div>
+          <div class="text-sm font-medium">开放自助注册</div>
+          <div class="text-xs text-slate-500 mt-1">开启后，用户可自行注册；关闭则仅管理员创建账号。</div>
+        </div>
+        <label class="inline-flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="open_registration" value="1" {% if open_registration %}checked{% endif %} class="w-5 h-5" />
+          <span class="text-sm">启用</span>
+        </label>
+      </div>
+      <div class="flex items-center justify-between gap-3 pt-3 border-t">
+        <div>
+          <div class="text-sm font-medium">自动入队分析任务（Cron）</div>
+          <div class="text-xs text-slate-500 mt-1">Cron 轮巡时自动将缺失分析的对话入队；关闭则需手动触发。</div>
+        </div>
+        <label class="inline-flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="enable_enqueue_analysis" value="1" {% if enable_enqueue_analysis %}checked{% endif %} class="w-5 h-5" />
+          <span class="text-sm">启用</span>
+        </label>
+      </div>
+      <div class="border-t pt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Cron 轮询间隔（秒）</label>
+          <input name="cron_interval_seconds" type="number" min="10" value="{{ cron_interval_seconds }}" class="w-full px-3 py-2 rounded-xl border" />
+          <div class="text-xs text-slate-500 mt-1">Cron 主循环 sleep 间隔；默认 600</div>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Worker 轮询间隔（秒）</label>
+          <input name="worker_poll_seconds" type="number" min="1" value="{{ worker_poll_seconds }}" class="w-full px-3 py-2 rounded-xl border" />
+          <div class="text-xs text-slate-500 mt-1">Worker 轮询分析任务队列；默认 5</div>
+        </div>
+      </div>
+      <div class="pt-2">
+        <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">保存</button>
+      </div>
+    </form>
+
+    <div class="mt-6 pt-6 border-t">
+      <div class="text-sm font-medium mb-2">设置文件（data/settings.json）</div>
+      <div class="flex flex-wrap gap-3 items-center">
+        <a href="/settings/general/export" class="px-4 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">导出设置</a>
+        <form method="post" action="/settings/general/import" enctype="multipart/form-data" class="flex items-center gap-2">
+          <input type="file" name="settings_file" accept=".json" class="text-sm" required />
+          <button type="submit" class="px-4 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">导入</button>
+        </form>
+      </div>
+      <div class="text-xs text-slate-500 mt-2">导出含 AI、桶、应用等配置（密钥以 **** 脱敏）；导入将覆盖当前系统设置。</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

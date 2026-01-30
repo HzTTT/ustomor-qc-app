@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">导出聊天记录（JSONL）</h1>
+    <div class="text-sm text-slate-500 mt-1">这份导出会尽量贴合你每天从桶里拿到的 jsonl 结构，方便复用。</div>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/conversations/{{ conv.id }}" class="px-3 py-2 rounded-xl border bg-white text-sm">返回对话</a>
+    <a href="/conversations/{{ conv.id }}/export.jsonl" class="px-3 py-2 rounded-xl border bg-white text-sm">下载 .jsonl</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <h2 class="font-semibold">JSONL 内容</h2>
+      <button id="copyJsonl" class="px-3 py-2 rounded-xl border bg-white text-sm">复制全部</button>
+    </div>
+    <textarea id="jsonlArea" class="w-full h-[560px] px-3 py-2 rounded-xl border font-mono text-xs whitespace-pre" readonly>{{ jsonl_text }}</textarea>
+    <div class="text-xs text-slate-500 mt-2">提示：每一行是一个 JSON；整份文件是 JSONL。</div>
+  </div>
+
+  <div class="bg-white border rounded-2xl p-4">
+    <h2 class="font-semibold mb-3">图片/附件预览</h2>
+    {% if images|length == 0 %}
+      <div class="text-sm text-slate-500">这段对话没有图片附件。</div>
+    {% else %}
+      <div class="grid grid-cols-2 gap-3">
+        {% for img in images %}
+          <a class="block" href="{{ img.url }}" target="_blank" rel="noreferrer">
+            <img src="{{ img.url }}" alt="image" class="w-full h-40 object-cover rounded-xl border" />
+            <div class="text-xs text-slate-500 mt-1 truncate">{{ img.url }}</div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  (function(){
+    const btn = document.getElementById('copyJsonl');
+    const ta = document.getElementById('jsonlArea');
+    if (!btn || !ta) return;
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        await navigator.clipboard.writeText(ta.value || '');
+        btn.textContent = '已复制';
+        setTimeout(()=>{ btn.textContent = '复制全部'; }, 1200);
+      } catch (err) {
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        btn.textContent = '已复制';
+        setTimeout(()=>{ btn.textContent = '复制全部'; }, 1200);
+      }
+    });
+  })();
+</script>
+{% endblock %}

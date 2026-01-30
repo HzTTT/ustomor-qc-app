@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex items-start justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">对话详情</h1>
+    <div class="text-sm text-slate-500 mt-1">
+      平台：{{ conv.platform }} · 外部ID：{{ conv.external_id }}
+      {% if conv.uploaded_at %} · 上传：{{ conv.uploaded_at.strftime("%Y-%m-%d %H:%M") }}{% endif %}
+      {% if conv.buyer_id %} · 买家ID：{{ conv.buyer_id }}{% endif %}
+      {% if agents_display %} · 客服：{{ agents_display }}{% endif %}
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    {% if user.role in ['admin','supervisor'] %}
+      <form method="post" action="/conversations/{{ conv.id }}/reanalyze">
+        <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">重新分析（覆盖）</button>
+      </form>
+    {% endif %}
+    {% if user.role in ['admin','supervisor'] %}
+      <a href="/conversations/{{ conv.id }}/export" class="px-3 py-2 rounded-xl border bg-white text-sm">导出JSONL</a>
+    {% endif %}
+    <a href="/conversations/{{ conv.id }}/export.txt" class="px-3 py-2 rounded-xl border bg-white text-sm">导出当日TXT</a>
+    <a href="/conversations/{{ conv.id }}/export-user.txt" class="px-3 py-2 rounded-xl border bg-white text-sm">导出用户TXT</a>
+    <a href="javascript:history.back()" class="px-3 py-2 rounded-xl border bg-white text-sm">返回</a>
+    <a href="/tasks" class="px-3 py-2 rounded-xl border bg-white text-sm">培训任务</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="bg-white border rounded-2xl p-4">
+    <h2 class="font-semibold mb-3">原始对话</h2>
+    {% if msgs|length == 0 %}
+      <div class="text-sm text-slate-500">本对话暂无消息（可能只导入了分析结果）</div>
+    {% endif %}
+
+    <div class="text-xs text-slate-500 mb-2">点击右侧标签可高亮对应引用消息</div>
+
+    
+    <div id="history-scroll" class="h-[200vh] overflow-y-auto pr-2 space-y-2">
+      {% for item in history_items %}
+        {% if item.type == 'sep' %}
+          <div class="py-2">
+            <div class="text-xs font-medium text-slate-600 flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded-full border bg-slate-50">{{ item.label }}</span>
+              {% if item.is_today %}
+                <span class="px-2 py-0.5 rounded-full bg-pink-50 border border-pink-200 text-pink-700">当日</span>
+              {% endif %}
+            </div>
+          </div>
+        {% else %}
+          {% set m = item.msg %}
+          {% set idx = item.global_idx %}
+
+          <div id="msg-{{ idx }}" class="p-3 rounded-xl border msg-cell
+            {% if item.is_today %} bg-pink-50/60 border-pink-200
+            {% elif m.sender in ['agent','system'] %} bg-slate-50
+            {% elif m.sender == 'buyer' %} bg-white
+            {% else %} bg-slate-100
+            {% endif %}">
+            <div class="text-xs text-slate-500 flex items-center justify-between">
+              {% if m.sender == 'buyer' %}
+                {% set sender_label = 'buyer' %}
+              {% elif m.sender == 'agent' %}
+                {% if sender_label_by_msgid and m.id in sender_label_by_msgid %}
+                  {% set sender_label = sender_label_by_msgid[m.id] %}
+                {% elif agent %}
+                  {% set sender_label = agent.name %}
+                {% elif conv.agent_account %}
+                  {% set sender_label = conv.agent_account %}
+                {% else %}
+                  {% set sender_label = m.sender %}
+                {% endif %}
+              {% else %}
+                {% set sender_label = m.sender %}
+              {% endif %}
+              <span>#{{ idx }} · {{ sender_label }}</span>
+              <span>{% if m.ts %}{{ m.ts.strftime("%Y-%m-%d %H:%M:%S") }}{% endif %}</span>
+            </div>
+            <div class="mt-1 whitespace-pre-wrap text-sm">{{ m.text }}</div>
+            {% if m.attachments and m.attachments|length > 0 %}
+              <div class="mt-2 flex flex-wrap gap-2">
+                {% for a in m.attachments %}
+                  {% if a.type == 'image' and a.url %}
+                    <a href="{{ a.url }}" target="_blank" class="block">
+                      <img src="{{ a.url }}" alt="image" class="max-h-48 rounded-xl border" />
+                    </a>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <script>
+      (function () {
+        const container = document.getElementById('history-scroll');
+        const anchor = {{ today_anchor_global if today_anchor_global is not none else 'null' }};
+        if (!container || anchor === null) return;
+        const el = document.getElementById('msg-' + anchor);
+        if (!el) return;
+        // scroll inside the message window
+        container.scrollTop = el.offsetTop - container.offsetTop - 12;
+      })();
+    </script>
+
+  </div>
+
+
+  <div class="space-y-4">
+    <div class="bg-white border rounded-2xl p-4">
+      <h2 class="font-semibold mb-3">AI质检输出（最新在前）</h2>
+
+      {% if latest_analysis %}
+        <div class="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="text-xs text-slate-500">第一大块：接待场景</div>
+            <div class="font-medium mt-1">{{ latest_analysis.reception_scenario or latest_analysis.dialog_type or '-' }}</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500">第二大块：满意度变化</div>
+            <div class="font-medium mt-1">{{ latest_analysis.satisfaction_change or '-' }}</div>
+          </div>
+        </div>
+      {% endif %}
+      {% if tag_groups and (tag_groups|length > 0) %}
+        <div class="mb-3 border rounded-xl p-3 bg-slate-50">
+          <div class="text-xs text-slate-500">第三大块：系统标签命中（点击标签高亮引用）</div>
+          <div class="mt-2 space-y-2">
+            {% for g in tag_groups %}
+              <div>
+                <div class="text-sm font-medium">{{ g.category }}</div>
+                <div class="mt-1 flex flex-wrap gap-2">
+                  {% for it in g.items %}
+                    <button type="button" class="tag-highlight-btn inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-white text-sm hover:bg-slate-100 cursor-pointer" title="{{ it.standard }}{% if it.reason %}\n\n原因：{{ it.reason }}{% endif %}" data-evidence="{{ it.evidence_json|e }}">
+                      {{ it.tag }}
+                    </button>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+      {% if analyses|length == 0 %}
+        <div class="text-sm text-slate-500">暂无AI质检输出</div>
+      {% endif %}
+
+      <div class="space-y-3">
+        {% for a in analyses %}
+          <div class="border rounded-xl p-3 {% if a.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
+            <div class="flex items-center justify-between text-sm">
+              <div class="font-medium">{{ a.reception_scenario or a.dialog_type or "对话" }}</div>
+              {% if a.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
+            </div>
+
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div>
+                <div class="text-xs text-slate-500">售前正面标签</div>
+                <div class="whitespace-pre-wrap">{{ a.pre_positive_tags or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">售后正面标签</div>
+                <div class="whitespace-pre-wrap">{{ a.after_positive_tags or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">售前负面标签</div>
+                <div class="whitespace-pre-wrap">{{ a.pre_negative_tags or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">售后负面标签</div>
+                <div class="whitespace-pre-wrap">{{ a.after_negative_tags or "-" }}</div>
+              </div>
+            </div>
+
+            {% if a.day_summary %}
+              <div class="mt-3 text-sm">
+                <div class="text-slate-500 text-xs">当日对话summary</div>
+                <div class="whitespace-pre-wrap">{{ a.day_summary }}</div>
+              </div>
+            {% endif %}
+
+            {% if a.tag_parsing %}
+              <div class="mt-3 text-sm">
+                <div class="text-slate-500 text-xs">评价解析</div>
+                <ul class="list-disc pl-5">
+                  {% for part in a.tag_parsing.split('&&&') %}
+                    {% set seg = part.split('$$$') %}
+                    <li>
+                      <span class="font-medium">{{ seg[0] }}</span>
+                      {% if seg|length > 1 and seg[1] %}
+                        <span class="text-slate-600">：{{ seg[1] }}</span>
+                      {% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+
+            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+              <div>
+                <div class="text-xs text-slate-500">商品提升建议</div>
+                <div class="whitespace-pre-wrap">{{ a.product_suggestion or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">服务提升建议</div>
+                <div class="whitespace-pre-wrap">{{ a.service_suggestion or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">售前规则更新建议</div>
+                <div class="whitespace-pre-wrap">{{ a.pre_rule_update or "-" }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-500">售后规则更新建议</div>
+                <div class="whitespace-pre-wrap">{{ a.after_rule_update or "-" }}</div>
+              </div>
+            </div>
+
+            {% if a.tag_update_suggestion %}
+              <div class="mt-3 text-sm">
+                <div class="text-slate-500 text-xs">标签更新建议</div>
+                <div class="whitespace-pre-wrap">{{ a.tag_update_suggestion }}</div>
+              </div>
+            {% endif %}
+
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if user.role in ['admin','supervisor'] %}
+    <div class="bg-white border rounded-2xl p-4">
+      <h2 class="font-semibold mb-3">对话标签管理</h2>
+      <div class="flex flex-wrap gap-2 mb-3">
+        {% for b in manual_tag_bindings %}
+          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-slate-50 text-sm">
+            {{ b.category }} · {{ b.tag }}
+            <form method="post" action="/conversations/{{ conv.id }}/tags/remove" class="inline" onsubmit="return confirm('移除该标签？');">
+              <input type="hidden" name="tag_id" value="{{ b.tag_id }}" />
+              <button type="submit" class="ml-1 text-red-600 hover:underline text-xs">移除</button>
+            </form>
+          </span>
+        {% endfor %}
+        {% if not manual_tag_bindings %}
+          <span class="text-slate-500 text-sm">暂无手动绑定标签</span>
+        {% endif %}
+      </div>
+      <form method="post" action="/conversations/{{ conv.id }}/tags/add" class="flex flex-wrap items-end gap-2">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">添加标签</label>
+          <select name="tag_id" class="px-3 py-2 rounded-xl border text-sm">
+            <option value="">请选择</option>
+            {% for t in tags_for_add %}
+              <option value="{{ t.id }}">{{ t.category }} · {{ t.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">原因（可选）</label>
+          <input type="text" name="reason" class="px-3 py-2 rounded-xl border text-sm" placeholder="可选" />
+        </div>
+        <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">添加</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <div class="bg-white border rounded-2xl p-4">
+      <h2 class="font-semibold mb-3" id="create_task">训练任务（主管/管理员可发起）</h2>
+
+      {% if user.role in ['admin','supervisor'] %}
+        <form method="post" action="/tasks/new" class="border rounded-xl p-3 bg-slate-50 space-y-3">
+          <input type="hidden" name="conversation_id" value="{{ conv.id }}" />
+          <div>
+            <label class="block text-sm text-slate-600 mb-1">指派给客服</label>
+            <select name="assigned_to_user_id" class="w-full border rounded-xl px-3 py-2">
+              {% for uid, u in users_by_id.items() %}
+                {% if u.role == 'agent' %}
+                  <option value="{{ u.id }}" {% if agent and u.id == agent.id %}selected{% endif %}>{{ u.name }}（{{ u.email }}）</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm text-slate-600 mb-1">任务说明（可选）</label>
+            <textarea name="notes" rows="3" class="w-full border rounded-xl px-3 py-2" placeholder="让客服基于这段对话，重新写一段更好的回复，用于模拟训练"></textarea>
+          </div>
+          <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">创建训练任务</button>
+        </form>
+      {% else %}
+        <div class="text-sm text-slate-500">你可以在“训练任务”里查看主管给你的任务，并提交你的改写练习。</div>
+      {% endif %}
+
+      <div class="mt-3 space-y-2">
+        {% for t in tasks %}
+          <div class="border rounded-xl p-3 flex items-center justify-between">
+            <div>
+              <div class="font-medium text-sm">任务 #{{ t.id }} · {{ t.status }}</div>
+              <div class="text-xs text-slate-500">创建时间：{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</div>
+            </div>
+            <a class="underline text-sm" href="/tasks/{{ t.id }}">打开</a>
+          </div>
+        {% endfor %}
+        {% if tasks|length == 0 %}
+          <div class="text-sm text-slate-500">暂无训练任务</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll('.tag-highlight-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var raw = this.getAttribute('data-evidence');
+      try {
+        var evidence = raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        evidence = [];
+      }
+      document.querySelectorAll('.msg-cell').forEach(function (el) {
+        el.classList.remove('tag-highlight');
+      });
+      if (!Array.isArray(evidence) || evidence.length === 0) return;
+      evidence.forEach(function (entry) {
+        var indices = entry && entry.indices;
+        if (!Array.isArray(indices)) return;
+        indices.forEach(function (idx) {
+          var el = document.getElementById('msg-' + idx);
+          if (el) el.classList.add('tag-highlight');
+        });
+      });
+    });
+  });
+})();
+</script>
+<style>
+.msg-cell.tag-highlight { box-shadow: 0 0 0 2px rgb(59 130 246); background-color: rgb(219 234 254) !important; }
+</style>
+{% endblock %}

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">聊天记录</h1>
+    <div class="text-sm text-slate-500 mt-1">按时间倒序查看，可按客服/标签/日期范围筛选。</div>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/conversations" class="px-3 py-2 rounded-xl border bg-white text-sm">重置筛选</a>
+  </div>
+</div>
+
+<div class="bg-white border rounded-2xl p-4 mb-6">
+  <form method="get" action="/conversations" class="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">站内客服账号</label>
+      <select name="agent_id" class="w-full px-3 py-2 rounded-xl border">
+        <option value="">全部</option>
+        {% for a in agents %}
+          <option value="{{ a.id }}" {% if agent_id and a.id == agent_id %}selected{% endif %}>{{ a.username }} · {{ a.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">站外客服账号</label>
+      <select name="ext_agent_account" class="w-full px-3 py-2 rounded-xl border">
+        <option value="">全部</option>
+        {% for acc in external_agent_accounts %}
+          <option value="{{ acc }}" {% if ext_agent_account and acc == ext_agent_account %}selected{% endif %}>{{ acc }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">标签/关键词</label>
+      <input name="tag" value="{{ tag }}" placeholder="例如：态度 / 退款 / 尺码" class="w-full px-3 py-2 rounded-xl border" />
+    </div>
+
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">聊天匹配查询</label>
+      <input name="match" value="{{ match }}" placeholder="只要当日对话出现，就会命中" class="w-full px-3 py-2 rounded-xl border" />
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">开始日期</label>
+      <input name="start" type="date" value="{{ start }}" class="w-full px-3 py-2 rounded-xl border" />
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">结束日期</label>
+      <input name="end" type="date" value="{{ end }}" class="w-full px-3 py-2 rounded-xl border" />
+    </div>
+
+    <div class="flex items-center justify-between gap-3">
+      <label class="flex items-center gap-2 text-sm text-slate-700">
+        <input type="checkbox" name="only_flagged" value="1" {% if only_flagged %}checked{% endif %} />
+        仅看需要复查
+      </label>
+      <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white border rounded-2xl overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50">
+      <tr>
+        <th class="text-left px-4 py-3">时间</th>
+        <th class="text-left px-4 py-3">轮数</th>
+        <th class="text-left px-4 py-3">客服</th>
+                <th class="text-left px-4 py-3">标签摘要</th>
+        <th class="text-left px-4 py-3">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in convos %}
+        {% set a = latest_by_conv.get(c.id) %}
+        {% set ts = display_ts_by_conv.get(c.id) %}
+        <tr class="border-t">
+          <td class="px-4 py-3 text-slate-600">{% if ts %}{{ ts.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
+          <td class="px-4 py-3 text-slate-700">{{ rounds_by_conv.get(c.id, 0) }}</td>
+          <td class="px-4 py-3">{{ display_agent_label_by_conv.get(c.id, "-") }}</td>
+          <td class="px-4 py-3 text-slate-700">
+            {% if a %}
+              {{ (a.after_negative_tags or a.pre_negative_tags or a.after_positive_tags or a.pre_positive_tags or "-")|truncate(40, True, "…") }}
+              {% if a.flag_for_review %}<span class="ml-2 text-xs px-2 py-1 rounded-full bg-red-50 border text-red-700">需复查</span>{% endif %}
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <a class="px-3 py-1 rounded-xl border bg-white text-xs" href="/conversations/{{ c.id }}">查看</a>
+          </td>
+        </tr>
+      {% endfor %}
+      {% if convos|length == 0 %}
+        <tr class="border-t">
+          <td class="px-4 py-6 text-slate-500" colspan="5">暂无数据</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+  <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+    <div>
+      共 {{ total }} 条 · 每页 {{ page_size }} 条 · 第 {{ page }} / {{ total_pages }} 页
+    </div>
+    <div class="flex items-center gap-2">
+      {% if page > 1 %}
+        <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">上一页</a>
+      {% else %}
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">上一页</span>
+      {% endif %}
+      {% if page < total_pages %}
+        <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">下一页</a>
+      {% else %}
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">下一页</span>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+  <div>
+    <h1 class="text-2xl font-semibold">新标签建议审核</h1>
+    <div class="text-sm text-slate-500 mt-1">AI 质检识别到“现有标签库未覆盖”的客户不满意点时，会生成建议工单；通过后自动创建标签并绑定对话。</div>
+  </div>
+  <div class="flex items-center gap-2">
+    {% if pending_count > 0 %}
+      <span class="px-3 py-1.5 rounded-full bg-amber-100 text-amber-800 text-sm">待审核 {{ pending_count }}</span>
+    {% endif %}
+    <a href="/settings/tags" class="px-3 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">标签管理</a>
+  </div>
+</div>
+
+{% if ok %}
+  <div class="mb-4 px-4 py-2 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm">{{ ok }}</div>
+{% endif %}
+{% if error %}
+  <div class="mb-4 px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">{{ error }}</div>
+{% endif %}
+
+<div class="mb-4 flex flex-wrap gap-2">
+  <a href="/settings/tag-suggestions" class="px-3 py-1.5 rounded-xl text-sm {{ 'bg-slate-900 text-white' if not status_filter else 'bg-white border hover:bg-slate-50' }}">全部</a>
+  <a href="/settings/tag-suggestions?status_filter=pending" class="px-3 py-1.5 rounded-xl text-sm {{ 'bg-slate-900 text-white' if status_filter == 'pending' else 'bg-white border hover:bg-slate-50' }}">待审核</a>
+  <a href="/settings/tag-suggestions?status_filter=approved" class="px-3 py-1.5 rounded-xl text-sm {{ 'bg-slate-900 text-white' if status_filter == 'approved' else 'bg-white border hover:bg-slate-50' }}">已通过</a>
+  <a href="/settings/tag-suggestions?status_filter=rejected" class="px-3 py-1.5 rounded-xl text-sm {{ 'bg-slate-900 text-white' if status_filter == 'rejected' else 'bg-white border hover:bg-slate-50' }}">已驳回</a>
+</div>
+
+<div class="space-y-4">
+  {% for s in suggestions %}
+    {% set c = convos.get(s.conversation_id) %}
+    <div class="bg-white border rounded-2xl p-4 {{ 'bg-amber-50/50 border-amber-200' if s.status == 'pending' else '' }}">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <div class="text-sm font-medium">
+            {% if c %}
+              <a href="/conversations/{{ c.id }}" class="text-sky-600 hover:underline">{{ c.external_id or c.id }}</a>
+              <span class="text-slate-400 mx-2">·</span>
+              <span class="text-slate-600">{{ c.platform or '-' }}</span>
+            {% else %}
+              对话 #{{ s.conversation_id }}
+            {% endif %}
+          </div>
+          <div class="text-xs text-slate-500 mt-1">AI 建议原因：{{ (s.ai_reason or '-')|truncate(120) }}</div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          {% if s.status == 'pending' %}
+            <span class="px-2 py-1 rounded-full bg-amber-100 text-amber-800 text-xs">待审核</span>
+          {% elif s.status == 'approved' %}
+            <span class="px-2 py-1 rounded-full bg-green-100 text-green-800 text-xs">已通过</span>
+          {% else %}
+            <span class="px-2 py-1 rounded-full bg-slate-200 text-slate-700 text-xs">已驳回</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if s.status == 'pending' %}
+        <form action="/settings/tag-suggestions/{{ s.id }}/approve" method="post" class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">一级分类</label>
+            <input type="text" name="suggested_category" value="{{ s.suggested_category or '' }}" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="例如：客服接待" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">二级标签名</label>
+            <input type="text" name="suggested_tag_name" value="{{ s.suggested_tag_name or '' }}" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="例如：未及时回复" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">判定标准</label>
+            <textarea name="suggested_standard" rows="2" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="给 AI 的判定规则">{{ s.suggested_standard or '' }}</textarea>
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">说明（给人看）</label>
+            <textarea name="suggested_description" rows="2" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="可选">{{ s.suggested_description or '' }}</textarea>
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-xs text-slate-500 mb-1">审核备注（可选）</label>
+            <input type="text" name="review_notes" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="通过时备注" />
+          </div>
+          <div class="md:col-span-2 flex flex-wrap gap-2">
+            <button type="submit" class="px-4 py-2 rounded-xl bg-green-600 text-white text-sm">通过并创建标签</button>
+          </div>
+        </form>
+        <form action="/settings/tag-suggestions/{{ s.id }}/reject" method="post" class="mt-2 flex flex-wrap gap-2">
+          <input type="text" name="review_notes" class="px-3 py-2 rounded-xl border text-sm w-64" placeholder="驳回原因（可选）" />
+          <button type="submit" class="px-4 py-2 rounded-xl border border-red-200 text-red-700 text-sm hover:bg-red-50">驳回</button>
+        </form>
+      {% else %}
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+          <div><span class="text-slate-500">分类</span> {{ s.suggested_category or '-' }}</div>
+          <div><span class="text-slate-500">标签</span> {{ s.suggested_tag_name or '-' }}</div>
+          {% if s.review_notes %}
+            <div class="md:col-span-2"><span class="text-slate-500">备注</span> {{ s.review_notes }}</div>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+  {% if not suggestions %}
+    <div class="bg-white border rounded-2xl p-8 text-center text-slate-500">暂无新标签建议</div>
+  {% endif %}
+</div>
+{% endblock %}

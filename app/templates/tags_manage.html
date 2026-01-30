@@ -1,0 +1,372 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <div class="text-2xl font-semibold">标签管理</div>
+      <div class="text-slate-500 text-sm mt-1">一级分类 + 二级标签 + 判定标准（AI会基于这些规则自动贴标签）</div>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/settings/tags?view=one" class="px-3 py-2 rounded-lg text-sm {{ 'bg-slate-900 text-white' if view_mode != 'all' else 'bg-white border hover:bg-slate-50' }}">分栏管理</a>
+      <a href="/settings/tags?view=all" class="px-3 py-2 rounded-lg text-sm {{ 'bg-slate-900 text-white' if view_mode == 'all' else 'bg-white border hover:bg-slate-50' }}">全部浏览</a>
+      <button type="button" id="openImport" class="px-3 py-2 rounded-lg bg-white border text-sm hover:bg-slate-50">批量导入</button>
+    </div>
+  </div>
+
+  {% if flash %}
+    <div class="mb-4 px-4 py-3 rounded-xl border {{ 'bg-emerald-50 border-emerald-200 text-emerald-800' if flash_kind == 'ok' else 'bg-rose-50 border-rose-200 text-rose-800' }}">
+      {{ flash }}
+    </div>
+  {% endif %}
+
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <!-- Left: Categories -->
+    <div class="lg:col-span-4">
+      <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b flex items-center justify-between">
+          <div class="font-semibold">一级分类</div>
+          <div class="text-xs text-slate-500">共 {{ categories|length }} 个</div>
+        </div>
+
+        <div class="p-4 border-b">
+          <form action="/settings/tags/category/create" method="post" class="space-y-3">
+            <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+            <div>
+              <label class="text-sm text-slate-600">分类名称</label>
+              <input name="name" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" placeholder="例如：客服接待" />
+            </div>
+            <div>
+              <label class="text-sm text-slate-600">说明（可选）</label>
+              <textarea name="description" rows="3" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" placeholder="这类标签主要关注什么"></textarea>
+            </div>
+            <button class="w-full px-3 py-2 rounded-lg bg-slate-900 text-white">新增分类</button>
+          </form>
+        </div>
+
+        <div class="max-h-[520px] overflow-auto">
+          {% for c in categories %}
+            {% set _is_selected = (view_mode != 'all' and selected_cat_id and (c.id == selected_cat_id)) %}
+            {% set _tag_count = (tags_by_cat.get(c.id) or [])|length %}
+            <div class="px-4 py-3 border-b {{ 'bg-slate-50' if _is_selected else 'bg-white' }}">
+              <a href="/settings/tags?view={{ view_mode }}&cat={{ c.id }}" class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <div class="font-medium truncate">{{ c.name }}</div>
+                    {% if not c.is_active %}
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">停用</span>
+                    {% endif %}
+                  </div>
+                  {% if c.description %}
+                    <div class="text-xs text-slate-500 mt-1 line-clamp-2">{{ c.description }}</div>
+                  {% endif %}
+                </div>
+                <div class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-700 whitespace-nowrap">{{ _tag_count }} 个标签</div>
+              </a>
+
+              <details class="mt-2">
+                <summary class="cursor-pointer text-xs text-slate-500">编辑/停用</summary>
+                <div class="mt-2 space-y-2">
+                  <form action="/settings/tags/category/update" method="post" class="space-y-2">
+                    <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                    <input type="hidden" name="id" value="{{ c.id }}" />
+                    <div class="grid grid-cols-2 gap-2">
+                      <input name="name" value="{{ c.name }}" class="px-3 py-2 rounded-lg border" />
+                      <label class="px-3 py-2 rounded-lg border flex items-center justify-between text-sm">
+                        <span class="text-slate-600">启用</span>
+                        <input type="checkbox" name="is_active" value="1" {{ 'checked' if c.is_active else '' }} />
+                      </label>
+                    </div>
+                    <textarea name="description" rows="2" class="w-full px-3 py-2 rounded-lg border" placeholder="说明（可选）">{{ c.description or '' }}</textarea>
+                    <button class="w-full px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">保存</button>
+                  </form>
+                  <form action="/settings/tags/category/delete" method="post">
+                    <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                    <input type="hidden" name="id" value="{{ c.id }}" />
+                    <button class="w-full px-3 py-2 rounded-lg bg-rose-600 text-white">停用该分类（同时停用其下所有标签）</button>
+                  </form>
+                  <form action="/settings/tags/category/remove" method="post" onsubmit="return confirm('确定要彻底删除这个分类吗？\n\n这会同时删除该分类下所有标签，以及这些标签过去的“命中记录”。\n删除后不可恢复。');">
+                    <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                    <input type="hidden" name="id" value="{{ c.id }}" />
+                    <button class="w-full px-3 py-2 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50">彻底删除该分类（不可恢复）</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Tags -->
+    <div class="lg:col-span-8">
+      <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b flex items-center justify-between">
+          <div class="font-semibold">二级标签</div>
+          {% if view_mode != 'all' %}
+            <div class="text-xs text-slate-500">当前分类：{{ (categories | selectattr('id','equalto',selected_cat_id) | list | first).name if selected_cat_id else '—' }}</div>
+          {% else %}
+            <div class="text-xs text-slate-500">按分类分组展示</div>
+          {% endif %}
+        </div>
+
+        <div class="p-4 border-b">
+          <form action="/settings/tags/tag/create" method="post" class="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+            {% if view_mode != 'all' and selected_cat_id %}
+              <input type="hidden" name="category_id" value="{{ selected_cat_id }}" />
+              <div class="md:col-span-4">
+                <label class="text-sm text-slate-600">所属分类</label>
+                <div class="mt-1 px-3 py-2 rounded-lg border bg-slate-50 text-slate-700">
+                  {{ (categories | selectattr('id','equalto',selected_cat_id) | list | first).name }}
+                </div>
+              </div>
+            {% else %}
+              <div class="md:col-span-4">
+                <label class="text-sm text-slate-600">所属分类</label>
+                <select name="category_id" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white">
+                  {% for c in categories if c.is_active %}
+                    <option value="{{ c.id }}">{{ c.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            {% endif %}
+
+            <div class="md:col-span-3">
+              <label class="text-sm text-slate-600">标签名称</label>
+              <input name="name" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" placeholder="例如：未及时回复" />
+            </div>
+
+            <div class="md:col-span-5">
+              <label class="text-sm text-slate-600">判定标准（给AI）</label>
+              <input name="standard" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" placeholder="什么情况下算命中？尽量写清楚" />
+            </div>
+
+            <div class="md:col-span-12">
+              <label class="text-sm text-slate-600">补充说明（给人看，可选）</label>
+              <textarea name="description" rows="2" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" placeholder="备注/例子/边界情况"></textarea>
+            </div>
+
+            <div class="md:col-span-12">
+              <button class="w-full md:w-auto px-4 py-2 rounded-lg bg-slate-900 text-white">新增标签</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="p-4">
+          {% if view_mode == 'all' %}
+            <div class="space-y-4">
+              {% for c in categories %}
+                {% set _tags = tags_by_cat.get(c.id) or [] %}
+                <div class="border rounded-2xl overflow-hidden">
+                  <div class="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
+                    <div class="font-semibold flex items-center gap-2">
+                      <span>{{ c.name }}</span>
+                      {% if not c.is_active %}
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">停用</span>
+                      {% endif %}
+                    </div>
+                    <div class="text-xs text-slate-500">{{ _tags|length }} 个标签</div>
+                  </div>
+                  {% if _tags %}
+                    <div class="divide-y">
+                      {% for t in _tags %}
+                        <div class="px-4 py-3">
+                          <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                              <div class="flex items-center gap-2">
+                                <div class="font-medium truncate">{{ t.name }}</div>
+                                {% if not t.is_active %}
+                                  <span class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">停用</span>
+                                {% endif %}
+                              </div>
+                              <div class="text-xs text-slate-500 mt-1">判定：{{ t.standard or '—' }}</div>
+                              {% if t.description %}
+                                <div class="text-xs text-slate-500 mt-1">备注：{{ t.description }}</div>
+                              {% endif %}
+                              <div class="text-xs text-slate-400 mt-1">tag_id = {{ t.id }}</div>
+                            </div>
+                            <details class="shrink-0">
+                              <summary class="cursor-pointer text-xs text-slate-500">编辑/停用</summary>
+                              <div class="mt-2 w-[520px] max-w-[80vw] p-3 rounded-xl border bg-white shadow">
+                                <form action="/settings/tags/tag/update" method="post" class="space-y-2">
+                                  <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                                  <input type="hidden" name="ui_cat" value="{{ c.id }}" />
+                                  <input type="hidden" name="id" value="{{ t.id }}" />
+                                  <div class="grid grid-cols-2 gap-2">
+                                    <input name="name" value="{{ t.name }}" class="px-3 py-2 rounded-lg border" />
+                                    <label class="px-3 py-2 rounded-lg border flex items-center justify-between text-sm">
+                                      <span class="text-slate-600">启用</span>
+                                      <input type="checkbox" name="is_active" value="1" {{ 'checked' if t.is_active else '' }} />
+                                    </label>
+                                  </div>
+                                  <input name="standard" value="{{ t.standard or '' }}" class="w-full px-3 py-2 rounded-lg border" placeholder="判定标准（给AI）" />
+                                  <textarea name="description" rows="2" class="w-full px-3 py-2 rounded-lg border" placeholder="备注/例子（可选）">{{ t.description or '' }}</textarea>
+                                  <button class="w-full px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">保存</button>
+                                </form>
+                                <form action="/settings/tags/tag/delete" method="post" class="mt-2">
+                                  <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                                  <input type="hidden" name="ui_cat" value="{{ c.id }}" />
+                                  <input type="hidden" name="id" value="{{ t.id }}" />
+                                  <button class="w-full px-3 py-2 rounded-lg bg-rose-600 text-white">停用该标签</button>
+                                </form>
+                                <form action="/settings/tags/tag/remove" method="post" class="mt-2" onsubmit="return confirm('确定要彻底删除这个标签吗？\n\n这会删除该标签过去的“命中记录”。\n删除后不可恢复。');">
+                                  <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                                  <input type="hidden" name="ui_cat" value="{{ c.id }}" />
+                                  <input type="hidden" name="id" value="{{ t.id }}" />
+                                  <button class="w-full px-3 py-2 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50">彻底删除该标签（不可恢复）</button>
+                                </form>
+                              </div>
+                            </details>
+                          </div>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% else %}
+                    <div class="px-4 py-4 text-slate-500 text-sm">暂无</div>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            {% if not selected_cat_id %}
+              <div class="text-slate-500 text-sm">请先在左侧选择一个分类。</div>
+            {% else %}
+              {% set _tags = tags_by_cat.get(selected_cat_id) or [] %}
+              <div class="text-sm text-slate-500 mb-3">当前分类共有 <span class="font-semibold text-slate-900">{{ _tags|length }}</span> 个标签</div>
+              {% if _tags %}
+                <div class="border rounded-2xl overflow-hidden divide-y">
+                  {% for t in _tags %}
+                    <div class="px-4 py-3">
+                      <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                          <div class="flex items-center gap-2">
+                            <div class="font-medium truncate">{{ t.name }}</div>
+                            {% if not t.is_active %}
+                              <span class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">停用</span>
+                            {% endif %}
+                          </div>
+                          <div class="text-xs text-slate-500 mt-1">判定：{{ t.standard or '—' }}</div>
+                          {% if t.description %}
+                            <div class="text-xs text-slate-500 mt-1">备注：{{ t.description }}</div>
+                          {% endif %}
+                          <div class="text-xs text-slate-400 mt-1">tag_id = {{ t.id }}</div>
+                        </div>
+                        <details class="shrink-0">
+                          <summary class="cursor-pointer text-xs text-slate-500">编辑/停用</summary>
+                          <div class="mt-2 w-[520px] max-w-[80vw] p-3 rounded-xl border bg-white shadow">
+                            <form action="/settings/tags/tag/update" method="post" class="space-y-2">
+                              <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                              <input type="hidden" name="ui_cat" value="{{ selected_cat_id }}" />
+                              <input type="hidden" name="id" value="{{ t.id }}" />
+                              <div class="grid grid-cols-2 gap-2">
+                                <input name="name" value="{{ t.name }}" class="px-3 py-2 rounded-lg border" />
+                                <label class="px-3 py-2 rounded-lg border flex items-center justify-between text-sm">
+                                  <span class="text-slate-600">启用</span>
+                                  <input type="checkbox" name="is_active" value="1" {{ 'checked' if t.is_active else '' }} />
+                                </label>
+                              </div>
+                              <input name="standard" value="{{ t.standard or '' }}" class="w-full px-3 py-2 rounded-lg border" placeholder="判定标准（给AI）" />
+                              <textarea name="description" rows="2" class="w-full px-3 py-2 rounded-lg border" placeholder="备注/例子（可选）">{{ t.description or '' }}</textarea>
+                              <button class="w-full px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">保存</button>
+                            </form>
+                            <form action="/settings/tags/tag/delete" method="post" class="mt-2">
+                              <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                              <input type="hidden" name="ui_cat" value="{{ selected_cat_id }}" />
+                              <input type="hidden" name="id" value="{{ t.id }}" />
+                              <button class="w-full px-3 py-2 rounded-lg bg-rose-600 text-white">停用该标签</button>
+                            </form>
+                            <form action="/settings/tags/tag/remove" method="post" class="mt-2" onsubmit="return confirm('确定要彻底删除这个标签吗？\n\n这会删除该标签过去的“命中记录”。\n删除后不可恢复。');">
+                              <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                              <input type="hidden" name="ui_cat" value="{{ selected_cat_id }}" />
+                              <input type="hidden" name="id" value="{{ t.id }}" />
+                              <button class="w-full px-3 py-2 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50">彻底删除该标签（不可恢复）</button>
+                            </form>
+                          </div>
+                        </details>
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="text-slate-500 text-sm">该分类下暂无标签，你可以在上方新增。</div>
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Import modal -->
+  <div id="importModal" class="fixed inset-0 z-[70] hidden" aria-hidden="true">
+    <div id="importBackdrop" class="absolute inset-0 bg-slate-900/40"></div>
+    <div class="absolute inset-0 flex items-center justify-center p-4">
+      <div class="w-full max-w-2xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+        <div class="px-4 py-3 border-b flex items-center justify-between">
+          <div class="font-semibold">批量导入（xlsx）</div>
+          <button type="button" id="closeImport" class="px-3 py-1.5 rounded-lg bg-white border text-sm hover:bg-slate-50">关闭</button>
+        </div>
+        <div class="p-4 space-y-4">
+          <div class="text-sm text-slate-600">
+            适合一次性把“一级分类 + 二级标签 + 判定标准”导入进来。
+            <a class="ml-2 underline text-slate-900" href="/settings/tags/template.xlsx">下载模板</a>
+          </div>
+
+          <form action="/settings/tags/import" method="post" enctype="multipart/form-data" class="space-y-3">
+            <div>
+              <label class="text-sm text-slate-600">导入方式</label>
+              <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                <label class="px-3 py-2 rounded-xl border flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="mode" value="incremental" checked />
+                  <div>
+                    <div class="font-medium text-sm">增量导入</div>
+                    <div class="text-xs text-slate-500 mt-0.5">只新增/更新表格里的内容，不影响现有未出现的分类/标签</div>
+                  </div>
+                </label>
+                <label class="px-3 py-2 rounded-xl border flex items-start gap-2 cursor-pointer">
+                  <input type="radio" name="mode" value="overwrite" />
+                  <div>
+                    <div class="font-medium text-sm">覆盖导入</div>
+                    <div class="text-xs text-slate-500 mt-0.5">以表格为准：删除未出现在表格里的旧分类/旧标签（同时删除历史命中），再按表格内容导入</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label class="text-sm text-slate-600">同名处理</label>
+              <select name="duplicate" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white">
+                <option value="overwrite" selected>覆盖更新（推荐）</option>
+                <option value="skip">跳过</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="text-sm text-slate-600">选择文件</label>
+              <input type="file" name="file" accept=".xlsx" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white" required />
+            </div>
+
+            <button class="w-full px-3 py-2 rounded-lg bg-slate-900 text-white">开始导入</button>
+            <div class="text-xs text-slate-500">导入完成后会自动切到“全部浏览”，方便你快速确认是否导入成功。</div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const openBtn = document.getElementById('openImport');
+      const modal = document.getElementById('importModal');
+      const closeBtn = document.getElementById('closeImport');
+      const backdrop = document.getElementById('importBackdrop');
+      function open(){ modal.classList.remove('hidden'); modal.setAttribute('aria-hidden','false'); }
+      function close(){ modal.classList.add('hidden'); modal.setAttribute('aria-hidden','true'); }
+      if(openBtn) openBtn.addEventListener('click', open);
+      if(closeBtn) closeBtn.addEventListener('click', close);
+      if(backdrop) backdrop.addEventListener('click', close);
+      document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
+    })();
+  </script>
+{% endblock %}
