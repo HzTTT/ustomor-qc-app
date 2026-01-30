@@ -2294,6 +2294,10 @@ def conversations_list(
     start: str = "",
     end: str = "",
     only_flagged: str | None = None,
+    reception_scenario: str = "",
+    satisfaction_change: str = "",
+    tag_id: str = "",
+    cid: str = "",
     page: int = 1,
 ):
     """Conversations list (landing page).
@@ -2419,7 +2423,12 @@ def conversations_list(
     tag_norm = (tag or "").strip()
     match_norm = (match or "").strip()
     only_flagged_bool = (only_flagged == "1")
-    if tag_norm or only_flagged_bool:
+    reception_scenario_norm = (reception_scenario or "").strip()
+    satisfaction_change_norm = (satisfaction_change or "").strip()
+    tag_id_norm = (tag_id or "").strip()
+    cid_norm = (cid or "").strip()
+    
+    if tag_norm or only_flagged_bool or reception_scenario_norm or satisfaction_change_norm or tag_id_norm:
         a_where = []
         if only_flagged_bool:
             a_where.append(ConversationAnalysis.flag_for_review == True)
@@ -2432,8 +2441,43 @@ def conversations_list(
                 ConversationAnalysis.tag_parsing.contains(tag_norm),
                 ConversationAnalysis.day_summary.contains(tag_norm),
             ))
+        if reception_scenario_norm:
+            a_where.append(ConversationAnalysis.reception_scenario == reception_scenario_norm)
+        if satisfaction_change_norm:
+            a_where.append(ConversationAnalysis.satisfaction_change == satisfaction_change_norm)
+        
+        # Tag ID filter via ConversationTagHit
+        if tag_id_norm:
+            try:
+                tag_id_int = int(tag_id_norm)
+                # Get latest analysis per conversation that has this tag
+                latest_subq = (
+                    select(func.max(ConversationAnalysis.id).label("analysis_id"))
+                    .group_by(ConversationAnalysis.conversation_id)
+                ).subquery()
+                
+                tag_hit_subq = (
+                    select(ConversationAnalysis.conversation_id)
+                    .select_from(ConversationTagHit)
+                    .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
+                    .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+                    .where(ConversationTagHit.tag_id == tag_id_int)
+                    .distinct()
+                )
+                a_where.append(ConversationAnalysis.conversation_id.in_(tag_hit_subq))
+            except Exception:
+                pass
+        
         subq = select(ConversationAnalysis.conversation_id).where(*a_where).distinct()
         conv_where.append(Conversation.id.in_(subq))
+    
+    # CID filter (exact match by conversation ID)
+    if cid_norm:
+        try:
+            cid_int = int(cid_norm)
+            conv_where.append(Conversation.id == cid_int)
+        except Exception:
+            pass
 
 
     # Message match filter: hit if ANY message text in that day conversation contains the keyword.
@@ -2668,6 +2712,19 @@ def conversations_list(
     # to avoid NameError from legacy template args.
     sender_label_by_msgid = {}
 
+    # Get tag categories and tags for filter dropdown
+    tag_categories = session.exec(
+        select(TagCategory)
+        .where(TagCategory.is_active == True)
+        .order_by(TagCategory.sort_order.asc(), TagCategory.id.asc())
+    ).all()
+    
+    tag_definitions = session.exec(
+        select(TagDefinition)
+        .where(TagDefinition.is_active == True)
+        .order_by(TagDefinition.category_id.asc(), TagDefinition.sort_order.asc(), TagDefinition.id.asc())
+    ).all()
+
     return _template(
         request,
         "conversations.html",
@@ -2680,6 +2737,8 @@ def conversations_list(
         agents=agents,
         external_agent_accounts=external_agent_accounts,
         display_agent_label_by_conv=display_agent_label_by_conv,
+        tag_categories=tag_categories,
+        tag_definitions=tag_definitions,
         # 聊天接待页需要“按客服账号筛选”，所以所有角色都回显当前选择。
         agent_id=agent_id_int,
         ext_agent_account=ext_agent_account_norm,
@@ -2688,15 +2747,19 @@ def conversations_list(
         start=start or "",
         end=end or "",
         only_flagged=only_flagged_bool,
+        reception_scenario=reception_scenario_norm,
+        satisfaction_change=satisfaction_change_norm,
+        tag_id=tag_id_norm,
+        cid=cid_norm,
         page=page,
         total=total,
         total_pages=total_pages,
         page_size=page_size,
-        base_qs=_build_conversations_base_qs(agent_id=agent_id_int, ext_agent_account=ext_agent_account_norm, tag=tag_norm, match=match_norm, start=start or "", end=end or "", only_flagged=only_flagged_bool),
+        base_qs=_build_conversations_base_qs(agent_id=agent_id_int, ext_agent_account=ext_agent_account_norm, tag=tag_norm, match=match_norm, start=start or "", end=end or "", only_flagged=only_flagged_bool, reception_scenario=reception_scenario_norm, satisfaction_change=satisfaction_change_norm, tag_id=tag_id_norm, cid=cid_norm),
     )
 
 
-def _build_conversations_base_qs(agent_id: int | None, ext_agent_account: str, tag: str, match: str, start: str, end: str, only_flagged: bool) -> str:
+def _build_conversations_base_qs(agent_id: int | None, ext_agent_account: str, tag: str, match: str, start: str, end: str, only_flagged: bool, reception_scenario: str = "", satisfaction_change: str = "", tag_id: str = "", cid: str = "") -> str:
     parts: list[str] = []
     if agent_id:
         parts.append(f"agent_id={agent_id}")
@@ -2715,6 +2778,16 @@ def _build_conversations_base_qs(agent_id: int | None, ext_agent_account: str, t
         parts.append(f"end={end}")
     if only_flagged:
         parts.append("only_flagged=1")
+    if reception_scenario:
+        from urllib.parse import quote_plus
+        parts.append(f"reception_scenario={quote_plus(reception_scenario)}")
+    if satisfaction_change:
+        from urllib.parse import quote_plus
+        parts.append(f"satisfaction_change={quote_plus(satisfaction_change)}")
+    if tag_id:
+        parts.append(f"tag_id={tag_id}")
+    if cid:
+        parts.append(f"cid={cid}")
     return "&".join(parts)
 
 
@@ -3011,11 +3084,19 @@ def conversation_detail(
             .where(ManualTagBinding.conversation_id == conv.id)
         ).all()
         for mb, t, c in rows:
+            # Process evidence for manual tags
+            # Note: Evidence conversion happens later after msgs_by_conv is loaded
+            ev = mb.evidence or {}
+            ev_list = ev if isinstance(ev, list) else (ev.get("evidence") if isinstance(ev, dict) else []) or []
+            
             manual_tag_bindings.append({
                 "binding_id": mb.id,
                 "tag_id": t.id,
                 "tag": t.name or "",
                 "category": c.name or "",
+                "reason": mb.reason or "",
+                "evidence": ev_list,
+                "evidence_json": json.dumps(ev_list),
             })
 
     # 全部标签（供添加下拉）
@@ -3619,6 +3700,8 @@ def add_conversation_tag(
     session: Session = Depends(get_session),
     tag_id: int = Form(...),
     reason: str = Form(""),
+    start_index: int | None = Form(None),
+    end_index: int | None = Form(None),
 ):
     conv = session.get(Conversation, conversation_id)
     if not conv:
@@ -3633,12 +3716,23 @@ def add_conversation_tag(
         )
     ).first()
     if not existing:
+        # Build evidence if indices provided
+        evidence = {}
+        if start_index is not None:
+            evidence_list = [{
+                "message_index": start_index,
+                "start_index": start_index,
+                "end_index": end_index if end_index is not None else start_index,
+            }]
+            evidence = {"evidence": evidence_list}
+        
         session.add(
             ManualTagBinding(
                 conversation_id=conversation_id,
                 tag_id=tag_id,
                 created_by_user_id=user.id,
                 reason=(reason or "").strip()[:500],
+                evidence=evidence,
             )
         )
         session.commit()
@@ -4398,9 +4492,23 @@ def tags_report_page(
             if not c:
                 continue
             key_uid = int(uid or 0)
-            cur = cur_idx.get((int(t.id), plat or "", key_uid), 0)
-            prev = prev_idx.get((int(t.id), plat or "", key_uid), 0) if prev_start else 0
-            yy = yoy_idx.get((int(t.id), plat or "", key_uid), 0) if yoy_start else 0
+            
+            # For summary row (plat=""), aggregate across all platforms
+            if plat == "":
+                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id) and k[2] == key_uid)
+                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id) and k[2] == key_uid) if prev_start else 0
+                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id) and k[2] == key_uid) if yoy_start else 0
+            # For platform-specific rows (plat="taobao") but uid=0, aggregate across all users in that platform
+            elif uid == 0:
+                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id) and k[1] == plat)
+                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id) and k[1] == plat) if prev_start else 0
+                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id) and k[1] == plat) if yoy_start else 0
+            # For specific platform + user
+            else:
+                cur = cur_idx.get((int(t.id), plat or "", key_uid), 0)
+                prev = prev_idx.get((int(t.id), plat or "", key_uid), 0) if prev_start else 0
+                yy = yoy_idx.get((int(t.id), plat or "", key_uid), 0) if yoy_start else 0
+            
             table_rows.append({
                 "is_header": False,
                 "group_id": group_id,
@@ -4408,6 +4516,9 @@ def tags_report_page(
                 "category_name": c.name,
                 "tag_name": t.name,
                 "tag_standard": (t.standard or "") or (t.description or "") or "未配置",
+                "tag_id": int(t.id),
+                "platform": plat or "",
+                "agent_user_id": key_uid if key_uid != 0 else "",
                 "current": cur,
                 "mom": _fmt_delta(cur, prev) if prev_start else "—",
                 "yoy": _fmt_delta(cur, yy) if yoy_start else "—",
@@ -4455,6 +4566,85 @@ def tags_report_page(
         agent_options=agent_options,
         table_rows=table_rows,
     )
+
+
+@app.get("/api/reports/tags/conversations")
+def get_tag_conversations(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    tag_id: int | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    platform: str | None = None,
+    agent_user_id: str | None = None,
+):
+    """Get list of conversation IDs that hit a specific tag."""
+    from sqlalchemy import func
+
+    if not tag_id:
+        return {"error": "tag_id is required", "cids": []}
+
+    def _parse_date(d: str | None):
+        if not d:
+            return None
+        d = d.strip()
+        if not d:
+            return None
+        try:
+            y, m, day = [int(x) for x in d.split("-")]
+            return datetime(y, m, day)
+        except Exception:
+            return None
+
+    start_dt = _parse_date(start)
+    end_dt = _parse_date(end)
+    if end_dt:
+        end_dt = end_dt + timedelta(days=1)  # Make it exclusive
+
+    platform_f = (platform or "").strip()
+    agent_user_id_int = None
+    try:
+        agent_user_id_int = int(agent_user_id) if agent_user_id else None
+    except Exception:
+        agent_user_id_int = None
+
+    # Agent role: only see self
+    if user.role == Role.agent:
+        agent_user_id_int = user.id
+
+    # Get latest analysis per conversation
+    latest_subq = (
+        select(func.max(ConversationAnalysis.id).label("analysis_id"))
+        .group_by(ConversationAnalysis.conversation_id)
+    ).subquery()
+
+    # Real-time mapping via AgentBinding if exists
+    binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
+
+    stmt = (
+        select(Conversation.id)
+        .select_from(ConversationTagHit)
+        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
+        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+        .where(ConversationTagHit.tag_id == tag_id)
+    )
+
+    if start_dt:
+        stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) >= start_dt)
+    if end_dt:
+        stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) < end_dt)
+    if platform_f:
+        stmt = stmt.where(Conversation.platform == platform_f)
+    if agent_user_id_int:
+        stmt = stmt.where(binding_user_id == agent_user_id_int)
+
+    stmt = stmt.order_by(Conversation.id.desc())
+    cids = [row[0] for row in session.exec(stmt).all()]
+
+    return {"cids": cids}
 
 
 # =========================

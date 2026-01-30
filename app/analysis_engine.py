@@ -108,6 +108,46 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
         for m in msgs
     ]
 
+    # Get previous conversation for historical context
+    previous_conv = None
+    previous_msgs_payload = []
+    if conv.user_thread_id:
+        # Find the most recent conversation before current one in the same thread
+        prev_stmt = (
+            select(Conversation)
+            .where(Conversation.user_thread_id == conv.user_thread_id)
+            .where(Conversation.id != conv.id)
+        )
+        # Order by started_at, fallback to uploaded_at, then id
+        if conv.started_at:
+            prev_stmt = prev_stmt.where(
+                (Conversation.started_at < conv.started_at) | (Conversation.started_at == None)  # noqa: E711
+            )
+        prev_stmt = prev_stmt.order_by(
+            Conversation.started_at.desc().nulls_last(),
+            Conversation.uploaded_at.desc().nulls_last(),
+            Conversation.id.desc()
+        ).limit(1)
+        
+        prev_convs = session.exec(prev_stmt).all()
+        if prev_convs:
+            previous_conv = prev_convs[0]
+            # Get messages from previous conversation (limit to 50 to control token usage)
+            prev_msgs = session.exec(
+                select(Message)
+                .where(Message.conversation_id == previous_conv.id)
+                .order_by(Message.id.asc())
+                .limit(50)
+            ).all()
+            previous_msgs_payload = [
+                {
+                    "sender": m.sender,
+                    "text": m.text[:500] if len(m.text) > 500 else m.text,  # Truncate long messages
+                    "agent_account": getattr(m, "agent_account", "") or "",
+                }
+                for m in prev_msgs
+            ]
+
     meta = {
         "platform": conv.platform,
         "agent_account": conv.agent_account,
@@ -154,9 +194,20 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
 
     tag_catalog = build_tag_catalog_for_prompt(catalog_payload)
 
+    # Build previous conversation context if available
+    prev_conv_data = None
+    if previous_conv and previous_msgs_payload:
+        prev_conv_data = {
+            "meta": {
+                "started_at": previous_conv.started_at.isoformat() if previous_conv.started_at else "",
+                "ended_at": previous_conv.ended_at.isoformat() if previous_conv.ended_at else "",
+            },
+            "messages": previous_msgs_payload,
+        }
+
     messages = [
         {"role": "system", "content": analysis_system_prompt(session)},
-        {"role": "user", "content": analysis_user_prompt(meta, msg_payload, tag_catalog=tag_catalog)},
+        {"role": "user", "content": analysis_user_prompt(meta, msg_payload, tag_catalog=tag_catalog, previous_conversation=prev_conv_data)},
     ]
 
     raw = await chat_completion(messages, temperature=0.2, session=session)
@@ -172,6 +223,22 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
     highlights = _pick_list(parsed, ["highlights", "问题定位", "问题定位（对话片段）"])  # type: ignore
 
     batch = get_or_create_auto_batch(session, batch_key=batch_key)
+
+    # Reset previous tag hits for this conversation (to ensure clean state)
+    # Get all previous analyses for this conversation
+    prev_analyses = session.exec(
+        select(ConversationAnalysis).where(ConversationAnalysis.conversation_id == conv.id)
+    ).all()
+    for prev_analysis in prev_analyses:
+        # Delete all ConversationTagHit records for this analysis
+        session.exec(
+            select(ConversationTagHit).where(ConversationTagHit.analysis_id == prev_analysis.id)
+        ).all()
+        for hit in session.exec(
+            select(ConversationTagHit).where(ConversationTagHit.analysis_id == prev_analysis.id)
+        ).all():
+            session.delete(hit)
+    session.commit()
 
     reception = str(parsed.get("reception_scenario", "") or parsed.get("dialog_type", "") or "").strip()
     satisfaction = str(parsed.get("satisfaction_change", "") or "").strip()

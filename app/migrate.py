@@ -313,6 +313,7 @@ def ensure_schema() -> None:
         'CREATE UNIQUE INDEX IF NOT EXISTS manualtagbinding_conv_tag_uniq ON manualtagbinding (conversation_id, tag_id);',
         'CREATE INDEX IF NOT EXISTS manualtagbinding_conversation_idx ON manualtagbinding (conversation_id);',
         'CREATE INDEX IF NOT EXISTS manualtagbinding_tag_idx ON manualtagbinding (tag_id);',
+        'ALTER TABLE manualtagbinding ADD COLUMN IF NOT EXISTS evidence JSONB DEFAULT \'{}\'::jsonb;',
 ]
 
     with engine.begin() as conn:

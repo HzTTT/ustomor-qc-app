@@ -11,7 +11,7 @@
 </div>
 
 <div class="bg-white border rounded-2xl p-4 mb-6">
-  <form method="get" action="/conversations" class="grid grid-cols-1 md:grid-cols-7 gap-3 items-end">
+  <form method="get" action="/conversations" class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-3 items-end">
     <div>
       <label class="block text-xs text-slate-500 mb-1">站内客服账号</label>
       <select name="agent_id" class="w-full px-3 py-2 rounded-xl border">
@@ -44,6 +44,50 @@
     </div>
 
     <div>
+      <label class="block text-xs text-slate-500 mb-1">接待场景</label>
+      <select name="reception_scenario" class="w-full px-3 py-2 rounded-xl border text-sm">
+        <option value="">全部</option>
+        <option value="售前" {% if reception_scenario == "售前" %}selected{% endif %}>售前</option>
+        <option value="售后" {% if reception_scenario == "售后" %}selected{% endif %}>售后</option>
+        <option value="售前和售后" {% if reception_scenario == "售前和售后" %}selected{% endif %}>售前和售后</option>
+        <option value="其他接待场景" {% if reception_scenario == "其他接待场景" %}selected{% endif %}>其他</option>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">满意度变化</label>
+      <select name="satisfaction_change" class="w-full px-3 py-2 rounded-xl border text-sm">
+        <option value="">全部</option>
+        <option value="大幅减少" {% if satisfaction_change == "大幅减少" %}selected{% endif %}>大幅减少</option>
+        <option value="小幅减少" {% if satisfaction_change == "小幅减少" %}selected{% endif %}>小幅减少</option>
+        <option value="无显著变化" {% if satisfaction_change == "无显著变化" %}selected{% endif %}>无显著变化</option>
+        <option value="小幅增加" {% if satisfaction_change == "小幅增加" %}selected{% endif %}>小幅增加</option>
+        <option value="大幅增加" {% if satisfaction_change == "大幅增加" %}selected{% endif %}>大幅增加</option>
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">具体标签</label>
+      <select name="tag_id" class="w-full px-3 py-2 rounded-xl border text-sm">
+        <option value="">全部</option>
+        {% for cat in tag_categories %}
+          <optgroup label="{{ cat.name }}">
+            {% for t in tag_definitions %}
+              {% if t.category_id == cat.id %}
+                <option value="{{ t.id }}" {% if tag_id and t.id|string == tag_id %}selected{% endif %}>{{ t.name }}</option>
+              {% endif %}
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">CID 编号</label>
+      <input name="cid" type="number" value="{{ cid }}" placeholder="对话ID" class="w-full px-3 py-2 rounded-xl border" />
+    </div>
+
+    <div>
       <label class="block text-xs text-slate-500 mb-1">开始日期</label>
       <input name="start" type="date" value="{{ start }}" class="w-full px-3 py-2 rounded-xl border" />
     </div>
@@ -53,12 +97,12 @@
       <input name="end" type="date" value="{{ end }}" class="w-full px-3 py-2 rounded-xl border" />
     </div>
 
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex flex-col items-start gap-2">
       <label class="flex items-center gap-2 text-sm text-slate-700">
         <input type="checkbox" name="only_flagged" value="1" {% if only_flagged %}checked{% endif %} />
         仅看需要复查
       </label>
-      <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
+      <button class="w-full px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
     </div>
   </form>
 </div>

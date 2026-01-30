@@ -558,3 +558,4 @@ class ManualTagBinding(SQLModel, table=True):
     created_by_user_id: int = Field(foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     reason: str = Field(default="")
+    evidence: dict = Field(default_factory=dict, sa_column=Column(JSON))

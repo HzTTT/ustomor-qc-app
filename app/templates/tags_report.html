@@ -100,7 +100,20 @@
                 {% endif %}
               </td>
               <td class="py-2 pr-4">
-                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.current }}</span>{% endif %}
+                {% if r.is_header %}
+                  <span class="text-slate-400">—</span>
+                {% else %}
+                  <button type="button" 
+                          class="underline text-blue-600 hover:text-blue-800" 
+                          data-group="{{ r.group_id }}"
+                          data-tag-id="{{ r.tag_id }}"
+                          data-platform="{{ r.platform }}"
+                          data-agent-user-id="{{ r.agent_user_id }}"
+                          onclick="showTagCids(this)"
+                          {% if r.current == 0 %}disabled class="text-slate-400 no-underline cursor-default"{% endif %}>
+                    {{ r.current }}
+                  </button>
+                {% endif %}
               </td>
               <td class="py-2 pr-4">
                 {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.mom }}</span>{% endif %}
@@ -130,7 +143,29 @@
   </div>
 </div>
 
+<!-- CID List popup -->
+<div id="cid-list-modal" class="fixed inset-0 hidden items-center justify-center bg-black/40 z-50">
+  <div class="bg-white rounded-2xl p-4 w-full max-w-2xl border max-h-[80vh] flex flex-col">
+    <div class="flex items-start justify-between gap-3 mb-3">
+      <div>
+        <div id="cid-list-title" class="font-semibold">命中标签的对话列表</div>
+        <div class="text-xs text-slate-500 mt-1">点击 CID 可查看对话详情</div>
+      </div>
+      <button type="button" class="px-3 py-1.5 rounded-lg bg-white border text-sm" onclick="closeCidList()">关闭</button>
+    </div>
+    <div id="cid-list-loading" class="text-sm text-slate-500">加载中...</div>
+    <div id="cid-list-content" class="overflow-y-auto flex-1 text-sm flex flex-wrap gap-2 hidden"></div>
+  </div>
+</div>
+
 <script>
+  const filterParams = {
+    start: '{{ filters.start }}',
+    end: '{{ filters.end }}',
+    platform: '{{ filters.platform }}',
+    agent_user_id: '{{ filters.agent_user_id }}'
+  };
+
   function toggleGroup(groupId) {
     const rows = document.querySelectorAll('[data-group="' + groupId + '"]');
     const ico = document.getElementById('ico-' + groupId);
@@ -155,6 +190,62 @@
   }
   document.getElementById('rule-modal').addEventListener('click', function(e){
     if (e.target && e.target.id === 'rule-modal') closeRule();
+  });
+
+  async function showTagCids(btn) {
+    const tagId = btn.getAttribute('data-tag-id');
+    const platform = btn.getAttribute('data-platform');
+    const agentUserId = btn.getAttribute('data-agent-user-id');
+    
+    // Build query params
+    const params = new URLSearchParams();
+    params.append('tag_id', tagId);
+    if (filterParams.start) params.append('start', filterParams.start);
+    if (filterParams.end) params.append('end', filterParams.end);
+    if (platform) params.append('platform', platform);
+    if (agentUserId) params.append('agent_user_id', agentUserId);
+    
+    const modal = document.getElementById('cid-list-modal');
+    const loading = document.getElementById('cid-list-loading');
+    const content = document.getElementById('cid-list-content');
+    const title = document.getElementById('cid-list-title');
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    
+    try {
+      const response = await fetch('/api/reports/tags/conversations?' + params.toString());
+      const data = await response.json();
+      
+      title.textContent = `命中标签的对话列表（共 ${data.cids.length} 个）`;
+      
+      if (data.cids.length === 0) {
+        content.innerHTML = '<div class="text-sm text-slate-500">暂无数据</div>';
+      } else {
+        content.innerHTML = data.cids.map(cid => 
+          `<a href="#" class="cid-link text-blue-600 hover:underline" data-cid="${cid}">CID=${cid}</a>`
+        ).join(' ');
+      }
+      
+      loading.classList.add('hidden');
+      content.classList.remove('hidden');
+    } catch (error) {
+      content.innerHTML = '<div class="text-sm text-red-600">加载失败：' + error.message + '</div>';
+      loading.classList.add('hidden');
+      content.classList.remove('hidden');
+    }
+  }
+  
+  function closeCidList() {
+    const modal = document.getElementById('cid-list-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+  
+  document.getElementById('cid-list-modal')?.addEventListener('click', function(e){
+    if (e.target && e.target.id === 'cid-list-modal') closeCidList();
   });
 </script>
 

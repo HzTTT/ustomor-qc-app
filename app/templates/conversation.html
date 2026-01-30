@@ -235,7 +235,13 @@
       <div class="flex flex-wrap gap-2 mb-3">
         {% for b in manual_tag_bindings %}
           <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-slate-50 text-sm">
-            {{ b.category }} · {{ b.tag }}
+            {% if b.evidence and b.evidence|length > 0 %}
+              <button type="button" class="manual-tag-btn" title="{{ b.reason }}" data-start="{{ b.evidence[0].start_index }}" data-end="{{ b.evidence[0].end_index }}">
+                {{ b.category }} · {{ b.tag }}
+              </button>
+            {% else %}
+              <span title="{{ b.reason }}">{{ b.category }} · {{ b.tag }}</span>
+            {% endif %}
             <form method="post" action="/conversations/{{ conv.id }}/tags/remove" class="inline" onsubmit="return confirm('移除该标签？');">
               <input type="hidden" name="tag_id" value="{{ b.tag_id }}" />
               <button type="submit" class="ml-1 text-red-600 hover:underline text-xs">移除</button>
@@ -259,6 +265,14 @@
         <div>
           <label class="block text-xs text-slate-500 mb-1">原因（可选）</label>
           <input type="text" name="reason" class="px-3 py-2 rounded-xl border text-sm" placeholder="可选" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">引用起始索引（可选）</label>
+          <input type="number" name="start_index" class="px-3 py-2 rounded-xl border text-sm w-24" placeholder="例如: 0" min="0" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">引用结束索引（可选）</label>
+          <input type="number" name="end_index" class="px-3 py-2 rounded-xl border text-sm w-24" placeholder="例如: 5" min="0" />
         </div>
         <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">添加</button>
       </form>
@@ -331,6 +345,24 @@
           if (el) el.classList.add('tag-highlight');
         });
       });
+    });
+  });
+
+  // Handle manual tags with simple start/end index
+  document.querySelectorAll('.manual-tag-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var startIdx = parseInt(this.getAttribute('data-start') || '0', 10);
+      var endIdx = parseInt(this.getAttribute('data-end') || '0', 10);
+      
+      document.querySelectorAll('.msg-cell').forEach(function (el) {
+        el.classList.remove('tag-highlight');
+      });
+      
+      // Highlight messages in the range
+      for (var i = startIdx; i <= endIdx; i++) {
+        var el = document.getElementById('msg-' + i);
+        if (el) el.classList.add('tag-highlight');
+      }
     });
   });
 })();

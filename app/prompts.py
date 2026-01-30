@@ -26,6 +26,7 @@ def analysis_system_prompt_fixed_part() -> str:
 1. 输出严格JSON，不要出现任何额外文本。
 2. 字段缺失时用空字符串/空数组/false。
 3. 不要编造对话里没有的信息；引用对话内容时要尽量短摘录并标明 message_index。
+4. 重要：如果提供了历史对话上下文，请将其作为背景参考，但只对「当日对话」进行分析和标签判定。历史对话仅用于理解用户背景和上下文，不要对历史对话中的问题进行标签命中。
 
 必须输出以下三大块：
 
@@ -82,10 +83,15 @@ def analysis_user_prompt(
     messages: list[dict[str, Any]],
     *,
     tag_catalog: str = "",
+    previous_conversation: dict[str, Any] | None = None,
 ) -> str:
     """Return the user prompt for analysis.
 
     messages item: {"sender":"buyer|agent|system","text":"...","attachments":[...]}
+    previous_conversation: {
+        "meta": {"started_at": "...", "ended_at": "..."},
+        "messages": [{"sender": "...", "text": "...", "agent_account": "..."}]
+    }
     """
 
     lines: list[str] = []
@@ -117,6 +123,32 @@ def analysis_user_prompt(
             f"ended_at: {conversation_meta.get('ended_at','')} ",
         ]
     )
+
+    # Build historical context if available
+    history_block = ""
+    if previous_conversation:
+        prev_meta = previous_conversation.get("meta", {})
+        prev_msgs = previous_conversation.get("messages", [])
+        if prev_msgs:
+            prev_lines: list[str] = []
+            for i, m in enumerate(prev_msgs):
+                sender = m.get("sender") or "unknown"
+                agent_account = (m.get("agent_account") or "").strip()
+                if sender == "agent" and agent_account:
+                    sender = f"agent({agent_account})"
+                text = (m.get("text") or "").strip().replace("\n", " ")
+                if len(text) > 200:
+                    text = text[:200] + "…"
+                prev_lines.append(f"#{i} {sender}: {text}")
+            
+            prev_date = prev_meta.get("started_at", "")
+            history_block = (
+                "\n\n=== 历史对话上下文（仅供参考，不要对此进行分析）===\n"
+                f"对话日期: {prev_date}\n"
+                "【重要】此历史对话仅用于理解用户背景，不要对其进行标签判定！\n\n"
+                + "\n".join(prev_lines)
+                + "\n"
+            )
 
     schema = {
         # === 第一大块：接待场景 ===
@@ -174,10 +206,12 @@ def analysis_user_prompt(
         tag_block = "\n\n=== 当前标签库（只能从这里选 tag_id；不要自造标签）===\n" + (tag_catalog.strip())
 
     return (
-        "请根据以下对话做质检分析，并输出严格JSON。\n\n"
-        "=== 对话元信息 ===\n"
+        "请根据以下「当日对话」做质检分析，并输出严格JSON。\n\n"
+        + history_block
+        + "\n=== 当日对话元信息 ===\n"
         f"{meta_str}\n\n"
-        "=== 对话逐条记录（带索引）===\n"
+        "=== 当日对话逐条记录（带索引）===\n"
+        "【重要】请仅对以下当日对话进行分析和标签判定！\n"
         + "\n".join(lines)
         + "\n\n"
         + tag_block
