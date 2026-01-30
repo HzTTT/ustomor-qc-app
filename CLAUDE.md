@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 导入 AI 对话分析 JSON 生成报表批次
 - 对话详情查看和训练任务创建
 - 客服改写练习提交和主管评分反馈
+- 标签管理与合并功能（新增：2026-01-30）
 
 ## 快速启动
 
@@ -263,6 +264,17 @@ FEISHU_WEBHOOK_URL=your_webhook_url
 1. 创建任务处理器 (`app/worker.py` 的 `handle_analysis_job` 参考)
 2. 在主应用中入队任务
 3. Worker 自动处理任务队列
+
+### 标签管理
+1. **标签合并**：`POST /settings/tags/tag/merge`
+   - 将源标签的所有对话标记迁移到目标标签
+   - 自动处理去重（同一对话同时有两个标签时保留目标标签）
+   - 迁移 AI 命中记录（ConversationTagHit）和手动标记（ManualTagBinding）
+   - 完成后删除源标签
+   - 详见：`TAG_MERGE_USAGE.md` 和 `docs/TAG_MERGE_FEATURE.md`
+2. **停用标签**：`POST /settings/tags/tag/delete` - 软删除
+3. **删除标签**：`POST /settings/tags/tag/remove` - 硬删除（包括所有命中记录）
+4. **批量导入**：`POST /settings/tags/import` - 从 Excel 导入标签配置
 
 ## 调试指南
 

@@ -215,6 +215,30 @@
                                   <input type="hidden" name="id" value="{{ t.id }}" />
                                   <button class="w-full px-3 py-2 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50">彻底删除该标签（不可恢复）</button>
                                 </form>
+                                <div class="mt-2 border-t pt-2">
+                                  <div class="text-xs text-slate-600 mb-2">合并到另一个标签：</div>
+                                  <form action="/settings/tags/tag/merge" method="post" onsubmit="return confirm('确定要合并吗？\n\n将把「{{ t.name }}」的所有对话标记转移到目标标签，然后删除「{{ t.name }}」。\n此操作不可恢复。');">
+                                    <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                                    <input type="hidden" name="ui_cat" value="{{ c.id }}" />
+                                    <input type="hidden" name="source_tag_id" value="{{ t.id }}" />
+                                    <select name="target_tag_id" class="w-full px-3 py-2 rounded-lg border bg-white text-sm mb-2" required>
+                                      <option value="">选择目标标签...</option>
+                                      {% for cat in categories %}
+                                        {% set cat_tags = tags_by_cat.get(cat.id) or [] %}
+                                        {% if cat_tags %}
+                                          <optgroup label="{{ cat.name }}">
+                                            {% for tag in cat_tags %}
+                                              {% if tag.id != t.id %}
+                                                <option value="{{ tag.id }}">{{ tag.name }}</option>
+                                              {% endif %}
+                                            {% endfor %}
+                                          </optgroup>
+                                        {% endif %}
+                                      {% endfor %}
+                                    </select>
+                                    <button class="w-full px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm">合并到目标标签</button>
+                                  </form>
+                                </div>
                               </div>
                             </details>
                           </div>
@@ -281,6 +305,30 @@
                               <input type="hidden" name="id" value="{{ t.id }}" />
                               <button class="w-full px-3 py-2 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-50">彻底删除该标签（不可恢复）</button>
                             </form>
+                            <div class="mt-2 border-t pt-2">
+                              <div class="text-xs text-slate-600 mb-2">合并到另一个标签：</div>
+                              <form action="/settings/tags/tag/merge" method="post" onsubmit="return confirm('确定要合并吗？\n\n将把「{{ t.name }}」的所有对话标记转移到目标标签，然后删除「{{ t.name }}」。\n此操作不可恢复。');">
+                                <input type="hidden" name="ui_view" value="{{ view_mode }}" />
+                                <input type="hidden" name="ui_cat" value="{{ selected_cat_id }}" />
+                                <input type="hidden" name="source_tag_id" value="{{ t.id }}" />
+                                <select name="target_tag_id" class="w-full px-3 py-2 rounded-lg border bg-white text-sm mb-2" required>
+                                  <option value="">选择目标标签...</option>
+                                  {% for cat in categories %}
+                                    {% set cat_tags = tags_by_cat.get(cat.id) or [] %}
+                                    {% if cat_tags %}
+                                      <optgroup label="{{ cat.name }}">
+                                        {% for tag in cat_tags %}
+                                          {% if tag.id != t.id %}
+                                            <option value="{{ tag.id }}">{{ tag.name }}</option>
+                                          {% endif %}
+                                        {% endfor %}
+                                      </optgroup>
+                                    {% endif %}
+                                  {% endfor %}
+                                </select>
+                                <button class="w-full px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm">合并到目标标签</button>
+                              </form>
+                            </div>
                           </div>
                         </details>
                       </div>
