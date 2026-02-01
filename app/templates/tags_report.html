@@ -80,14 +80,18 @@
         </thead>
         <tbody>
           {% for r in table_rows %}
-            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %}" {% if not r.is_header %}data-group="{{ r.group_id }}"{% endif %}>
+            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %} {% if r.level > 0 %}hidden{% endif %}" 
+                data-row-id="{{ r.group_id }}-{% if r.is_header %}header{% else %}{{ loop.index }}{% endif %}"
+                data-level="{{ r.level }}"
+                data-parent="{{ r.parent_id }}"
+                data-group="{{ r.group_id }}">
               <td class="py-2 pr-4">
                 {% if r.is_header %}
-                  <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')">
-                    <span id="ico-{{ r.group_id }}">▾</span> {{ r.group_label }}
+                  <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')" style="padding-left: {{ r.level * 20 }}px;">
+                    <span id="ico-{{ r.group_id }}">▸</span> {{ r.group_label }}
                   </button>
                 {% else %}
-                  <div class="pl-5">{{ r.group_label }}</div>
+                  <div style="padding-left: {{ r.level * 20 + 20 }}px;">{{ r.group_label }}</div>
                 {% endif %}
               </td>
               <td class="py-2 pr-4">
@@ -170,12 +174,46 @@
   };
 
   function toggleGroup(groupId) {
-    const rows = document.querySelectorAll('tr[data-group="' + groupId + '"]');
     const ico = document.getElementById('ico-' + groupId);
-    if (!rows || rows.length === 0) return;
-    const hidden = rows[0].classList.contains('hidden');
-    rows.forEach(r => r.classList.toggle('hidden', !hidden));
-    if (ico) ico.textContent = hidden ? '▾' : '▸';
+    const isExpanded = ico && ico.textContent === '▾';
+    
+    if (isExpanded) {
+      // 折叠：隐藏所有子元素（包括孙子元素）
+      const allChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
+      allChildren.forEach(child => {
+        child.classList.add('hidden');
+        // 同时折叠子元素的图标
+        const childGroupId = child.getAttribute('data-group');
+        const childIco = document.getElementById('ico-' + childGroupId);
+        if (childIco) {
+          childIco.textContent = '▸';
+        }
+        // 递归隐藏所有后代
+        hideAllDescendants(childGroupId);
+      });
+      if (ico) ico.textContent = '▸';
+    } else {
+      // 展开：只显示直接子元素
+      const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
+      directChildren.forEach(child => {
+        child.classList.remove('hidden');
+      });
+      if (ico) ico.textContent = '▾';
+    }
+  }
+  
+  function hideAllDescendants(parentId) {
+    const children = document.querySelectorAll('[data-parent="' + parentId + '"]');
+    children.forEach(child => {
+      child.classList.add('hidden');
+      const childGroupId = child.getAttribute('data-group');
+      const childIco = document.getElementById('ico-' + childGroupId);
+      if (childIco) {
+        childIco.textContent = '▸';
+      }
+      // 递归隐藏
+      hideAllDescendants(childGroupId);
+    });
   }
   function showRule(btn) {
     const title = btn.getAttribute('data-rule-title') || '判定标准';

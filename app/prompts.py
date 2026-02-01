@@ -19,9 +19,14 @@ def get_editable_qc_prompt(session: "Session") -> str:
     return raw if raw else DEFAULT_QC_EDITABLE_PROMPT
 
 
-def analysis_system_prompt_fixed_part() -> str:
-    """系统固定、不可编辑部分。"""
-    return """
+def analysis_system_prompt_fixed_part(session: "Session | None" = None) -> str:
+    """系统固定、不可编辑部分（含驳回标签列表）。"""
+    # 获取驳回标签列表
+    rejected_suggestions_block = ""
+    if session is not None:
+        rejected_suggestions_block = build_rejected_suggestions_block(session)
+    
+    base_prompt = """
 输出要求（系统固定，不可编辑）：
 1. 输出严格JSON，不要出现任何额外文本。
 2. 字段缺失时用空字符串/空数组/false。
@@ -51,7 +56,10 @@ satisfaction_change: 评估用户从对话开始到结束的内心满意度变�
 tag_hits: 数组，每组包含 tag_id、reason、evidence。
 evidence 每项: message_index, start_index, end_index, quote。
 start_index/end_index 为引用对话的起始和结束消息索引（含）。
-
+"""
+    
+    # 添加驳回标签提醒
+    new_tag_block = """
 【新标签建议】（可选）
 若发现对话中有让客户不满意的问题，但现有标签库无法覆盖，输出：
 new_tag_suggestions: [{
@@ -61,11 +69,20 @@ new_tag_suggestions: [{
   "description": "说明",
   "reason": "为什么建议新增此标签"
 }]
-
+"""
+    
+    if rejected_suggestions_block:
+        new_tag_block += f"""
+{rejected_suggestions_block}
+"""
+    
+    compatibility_block = """
 兼容保留（已废弃字段可填空字符串）：
 - 已废弃（填空字符串即可）：pre_positive_tags、after_positive_tags、pre_negative_tags、after_negative_tags、tag_parsing、product_suggestion、service_suggestion、pre_rule_update、after_rule_update
 - 保留字段：dialog_type、day_summary、tag_update_suggestion、customer_issue_highlights、must_read_highlights、overall_score、sentiment、issue_level、problem_types、flag_for_review
 """
+    
+    return base_prompt + new_tag_block + compatibility_block
 
 
 def analysis_system_prompt(session: "Session | None" = None) -> str:
@@ -74,7 +91,7 @@ def analysis_system_prompt(session: "Session | None" = None) -> str:
         editable = get_editable_qc_prompt(session)
     else:
         editable = DEFAULT_QC_EDITABLE_PROMPT
-    return editable + analysis_system_prompt_fixed_part()
+    return editable + analysis_system_prompt_fixed_part(session)
 
 
 def analysis_user_prompt(
@@ -220,6 +237,37 @@ def analysis_user_prompt(
         "=== 输出JSON结构（必须严格遵守）===\n"
         + str(schema)
     )
+
+
+def build_rejected_suggestions_block(session: "Session") -> str:
+    """从 TagSuggestion 表读取已驳回的标签建议，构建提醒块，指导AI勿再建议类似标签。"""
+    from models import TagSuggestion
+    from sqlmodel import select
+
+    rejected = session.exec(
+        select(TagSuggestion)
+        .where(TagSuggestion.status == "rejected")
+        .order_by(TagSuggestion.reviewed_at.desc())
+        .limit(50)
+    ).all()
+
+    if not rejected:
+        return ""
+
+    lines = ["【重要】以下标签建议已被管理员驳回，请勿再次建议类似标签："]
+    for r in rejected:
+        cat = r.suggested_category or "未分类"
+        name = r.suggested_tag_name or "未命名"
+        reason = (r.review_notes or "").strip()
+        if reason:
+            reason_short = reason.replace("\n", " ")
+            if len(reason_short) > 80:
+                reason_short = reason_short[:80] + "…"
+            lines.append(f"- [{cat}] {name} - 驳回原因：{reason_short}")
+        else:
+            lines.append(f"- [{cat}] {name}")
+
+    return "\n".join(lines)
 
 
 def build_tag_catalog_for_prompt(categories: list[dict[str, Any]]) -> str:

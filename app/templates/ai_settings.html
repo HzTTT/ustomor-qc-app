@@ -73,8 +73,9 @@
     </form>
 
     <div class="mt-4">
-      <div class="text-sm font-medium">系统固定部分（只读）</div>
-      <pre class="mt-2 text-xs whitespace-pre-wrap bg-slate-900 text-slate-50 rounded-2xl p-3 overflow-auto">{{ qc_fixed_prompt }}</pre>
+      <div class="text-sm font-medium">质检系统提示词·固定部分（只读，含已驳回标签建议）</div>
+      <div class="text-xs text-slate-500 mt-1">下方为实际下发给 AI 的固定部分，已根据当前已驳回的标签建议动态拼接。</div>
+      <pre class="mt-2 text-xs whitespace-pre-wrap bg-slate-900 text-slate-50 rounded-2xl p-3 overflow-auto max-h-[32rem]">{{ qc_fixed_prompt }}</pre>
     </div>
 
     <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">

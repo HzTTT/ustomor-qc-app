@@ -10,6 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 对话详情查看和训练任务创建
 - 客服改写练习提交和主管评分反馈
 - 标签管理与合并功能（新增：2026-01-30）
+- **自动质检与未绑定账号通知（新增：2026-02-02）**
+  - 导入后自动检测未绑定客服账号并飞书通知
+  - 每小时自动检查符合条件的对话并触发AI质检
+  - 详见：`docs/AUTO_QC_QUICKSTART.md`
 
 ## 快速启动
 
@@ -101,8 +105,9 @@ data/sample_batch.json
 
 **后台任务**
 - `app/worker.py` - 后台任务处理器
-- `app/cron_runner.py` - 定时任务调度器
+- `app/cron_runner.py` - 定时任务调度器（含自动质检检查）
 - `app/daily_summary.py` - AI 日报生成
+- `app/qc_checker.py` - 质检检查器（新增：2026-02-02）
 
 **数据模型 (models.py)**
 ```
@@ -267,14 +272,30 @@ FEISHU_WEBHOOK_URL=your_webhook_url
 
 ### 标签管理
 1. **标签合并**：`POST /settings/tags/tag/merge`
-   - 将源标签的所有对话标记迁移到目标标签
-   - 自动处理去重（同一对话同时有两个标签时保留目标标签）
-   - 迁移 AI 命中记录（ConversationTagHit）和手动标记（ManualTagBinding）
-   - 完成后删除源标签
-   - 详见：`TAG_MERGE_USAGE.md` 和 `docs/TAG_MERGE_FEATURE.md`
+ - 将源标签的所有对话标记迁移到目标标签
+ - 自动处理去重（同一对话同时有两个标签时保留目标标签）
+ - 迁移 AI 命中记录（ConversationTagHit）和手动标记（ManualTagBinding）
+ - 完成后删除源标签
+ - 详见：`TAG_MERGE_USAGE.md` 和 `docs/TAG_MERGE_FEATURE.md`
 2. **停用标签**：`POST /settings/tags/tag/delete` - 软删除
 3. **删除标签**：`POST /settings/tags/tag/remove` - 硬删除（包括所有命中记录）
 4. **批量导入**：`POST /settings/tags/import` - 从 Excel 导入标签配置
+5. **已驳回的标签建议**：TagSuggestion 中 status=rejected 的记录会动态加入AI质检提示词，指导AI勿再建议类似标签（无需单独管理界面）
+
+### 自动质检（新增：2026-02-02）
+1. **未绑定客服账号检测**
+ - 导入后自动检测未绑定的外部客服账号
+ - 通过飞书 webhook 发送通知（包含客服昵称）
+ - 去重机制，仅通知新出现的未绑定账号
+2. **自动质检触发**
+ - 每小时检查一次符合条件的对话（>5消息 且 所有客服已绑定）
+ - 导入成功后立即触发检查（无需等待整点）
+ - 自动创建 AIAnalysisJob 任务并入队
+3. **使用说明**
+ - 快速开始：`docs/AUTO_QC_QUICKSTART.md`
+ - 详细文档：`docs/AUTO_QC_FEATURE.md`
+ - 更新日志：`CHANGELOG_AUTO_QC.md`
+ - 测试脚本：`scripts/test_auto_qc.py`
 
 ## 调试指南
 

@@ -209,6 +209,7 @@ def sync_bucket_once(
     # importer-level signals across all processed objects in this run.
     agent_accounts_seen: set[str] = set()
     unbound_agent_accounts: set[str] = set()
+    unbound_agent_nicks: Dict[str, str] = {}  # account -> nick mapping
 
     for it in items:
         exists = session.exec(
@@ -260,6 +261,12 @@ def sync_bucket_once(
                         agent_accounts_seen.add(str(x))
                     for x in (result.get("unbound_agent_accounts") or []):
                         unbound_agent_accounts.add(str(x))
+                    # 收集未绑定账号的昵称信息
+                    nicks = result.get("unbound_agent_nicks") or {}
+                    if isinstance(nicks, dict):
+                        for acc, nick in nicks.items():
+                            if str(acc).strip() and str(nick).strip():
+                                unbound_agent_nicks[str(acc).strip()] = str(nick).strip()
                 except Exception:
                     pass
             else:
@@ -354,4 +361,5 @@ def sync_bucket_once(
         "errors": errors,
         "agent_accounts": sorted([x for x in agent_accounts_seen if x]),
         "unbound_agent_accounts": sorted([x for x in unbound_agent_accounts if x]),
+        "unbound_agent_nicks": unbound_agent_nicks,  # 新增：未绑定账号的昵称映射
     }

@@ -222,6 +222,8 @@ def import_leyan_jsonl(
 
     agent_accounts_seen: set[str] = set()
     unbound_agent_accounts: set[str] = set()
+    # 记录未绑定客服账号的昵称信息：{account: nick}
+    unbound_agent_nicks: Dict[str, str] = {}
 
     counts_by_date: Dict[str, Dict[str, int]] = {}
 
@@ -283,10 +285,17 @@ def import_leyan_jsonl(
                 agent_accounts_seen.add(acc)
                 if not _is_agent_account_bound(session, platform, acc):
                     unbound_agent_accounts.add(acc)
+                    # 记录昵称信息
+                    nick = agent_nicks.get(acc, "")
+                    if nick:
+                        unbound_agent_nicks[acc] = nick
         elif agent_account:
             agent_accounts_seen.add(agent_account)
             if not _is_agent_account_bound(session, platform, agent_account):
                 unbound_agent_accounts.add(agent_account)
+                # 记录昵称信息
+                if assistant_nick:
+                    unbound_agent_nicks[agent_account] = assistant_nick
 
         external_id = f"{platform}:{seller_id}:{buyer_id}:{date_str}"
         counts_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
@@ -368,4 +377,5 @@ def import_leyan_jsonl(
         "counts_by_date": counts_by_date,
         "agent_accounts": sorted([x for x in agent_accounts_seen if x]),
         "unbound_agent_accounts": sorted([x for x in unbound_agent_accounts if x]),
+        "unbound_agent_nicks": unbound_agent_nicks,  # 新增：未绑定账号的昵称映射
     }

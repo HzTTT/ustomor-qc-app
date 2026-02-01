@@ -320,7 +320,7 @@ def ai_settings_page(
         cfg=cfg,
         system_prompt=analysis_system_prompt(session),
         qc_editable_prompt=get_editable_qc_prompt(session),
-        qc_fixed_prompt=analysis_system_prompt_fixed_part(),
+        qc_fixed_prompt=analysis_system_prompt_fixed_part(session),
         base_url=ai.get("base_url") or "",
         model=ai.get("model") or "",
         timeout=str(int(ai.get("timeout_s") or 1800)),
@@ -1127,6 +1127,7 @@ def bucket_settings_update(
 
         srcs = sources or ["TAOBAO"]
         summaries = []
+        all_unbound_accounts = []  # 收集所有未绑定账号信息
         for src in srcs:
             src = (src or "").strip().upper()
             if src not in ("TAOBAO", "DOUYIN"):
@@ -1142,6 +1143,18 @@ def bucket_settings_update(
             try:
                 res = sync_bucket_once(session, cfg=cfg, prefix=date_prefix, platform=platform, imported_by_user_id=user.id, create_jobs_if_missing=False)
                 summaries.append(f"{src}: 发现 {res.get('seen',0)} 个文件，导入 {res.get('imported',0)}，失败 {res.get('errors',0)}")
+                
+                # 收集未绑定客服账号信息
+                unbound = res.get("unbound_agent_accounts") or []
+                unbound_nicks = res.get("unbound_agent_nicks") or {}
+                if unbound:
+                    for acc in unbound:
+                        nick = unbound_nicks.get(acc, "")
+                        all_unbound_accounts.append({
+                            "platform": platform,
+                            "account": acc,
+                            "nick": nick
+                        })
             except Exception as e:
                 summaries.append(f"{src}: 异常 {e}")
 
@@ -1151,7 +1164,29 @@ def bucket_settings_update(
         url = get_feishu_webhook_url(session)
         if url:
             try:
-                send_feishu_webhook(url, title="聊天记录抓取：手动触发", text=result_text)
+                send_feishu_webhook(url, title="📥 聊天记录抓取：手动触发", text=result_text)
+            except Exception:
+                pass
+        
+        # 如果发现未绑定的客服账号，发送通知
+        if all_unbound_accounts and url:
+            try:
+                msg_lines = []
+                for item in all_unbound_accounts:
+                    acc = item["account"]
+                    nick = item["nick"]
+                    platform = item["platform"]
+                    if nick:
+                        msg_lines.append(f"• {acc} (昵称: {nick}) - {platform}")
+                    else:
+                        msg_lines.append(f"• {acc} - {platform}")
+                
+                if msg_lines:
+                    send_feishu_webhook(
+                        url,
+                        title="⚠️ 发现未绑定客服账号",
+                        text=f"日期：{d}\n\n未绑定账号：\n" + "\n".join(msg_lines) + "\n\n请到【设置 > 客服账号绑定】页面进行配置。"
+                    )
             except Exception:
                 pass
 
@@ -4521,7 +4556,7 @@ def tags_report_page(
         except Exception:
             return None
 
-    mode = (time_mode or "yesterday").strip() or "yesterday"  # 默认昨天
+    mode = (time_mode or "last_week").strip() or "last_week"  # 默认上周
     start_dt = _parse_date(start)
     end_dt = _parse_date(end)
     now = datetime.utcnow()
@@ -4882,7 +4917,7 @@ def tags_report_page(
 
     table_rows: list[dict[str, object]] = []
 
-    def _add_group(group_id: str, group_label: str, plat: str | None, uid: int | None):
+    def _add_group(group_id: str, group_label: str, plat: str | None, uid: int | None, level: int, parent_id: str | None = None):
         # Calculate sums for the header row
         key_uid = int(uid or 0)
         total_cur = 0
@@ -4936,6 +4971,8 @@ def tags_report_page(
             "is_header": True,
             "group_id": group_id,
             "group_label": group_label,
+            "level": level,
+            "parent_id": parent_id,
             "category_name": "",
             "tag_name": "",
             "tag_standard": "",
@@ -4976,6 +5013,8 @@ def tags_report_page(
                 "is_header": False,
                 "group_id": group_id,
                 "group_label": "",
+                "level": level,
+                "parent_id": parent_id,
                 "category_name": c.name,
                 "tag_name": t.name,
                 "tag_standard": (t.standard or "") or (t.description or "") or "未配置",
@@ -4988,19 +5027,23 @@ def tags_report_page(
                 "ratio": _fmt_ratio(cur, total_conv_cur),
             })
 
-    _add_group("summary", "汇总", "", 0)
+    # 汇总层 (level=0)
+    _add_group("summary", "汇总", "", 0, level=0, parent_id=None)
 
+    # 平台层 (level=1)
     for p in platforms:
         if not p:
             continue
-        _add_group(f"plat-{p}", f"平台：{p}", p, 0)
+        _add_group(f"plat-{p}", f"平台：{p}", p, 0, level=1, parent_id="summary")
+        
+        # 客服层 (level=2)
         uids = sorted({k[2] for k in cur_idx.keys() if k[1] == p and k[2] != 0})
         if agent_user_id_int:
             uids = [uid for uid in uids if uid == agent_user_id_int]
         for uid in uids:
             nm = user_by_id.get(uid)
             label = nm.name if nm else f"UID:{uid}"
-            _add_group(f"plat-{p}-u{uid}", f"站内客服：{label}", p, uid)
+            _add_group(f"plat-{p}-u{uid}", f"站内客服：{label}", p, uid, level=2, parent_id=f"plat-{p}")
 
     time_modes = [
         ("all", "汇总"),
