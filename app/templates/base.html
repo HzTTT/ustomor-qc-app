@@ -24,6 +24,7 @@
               <a href="/tasks" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/tasks') else 'bg-white border' }}">培训</a>
               <a href="/reports" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if (_path == '/reports' or _path.startswith('/reports/daily') or _path.startswith('/reports/ai') or _path.startswith('/reports/voc')) else 'bg-white border' }}">报表</a>
               <a href="/reports/tags" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/reports/tags') else 'bg-white border' }}">标签报表</a>
+              <a href="/reports/agent-analysis" class="px-3 py-1.5 rounded-lg text-sm hover:bg-slate-50 {{ 'bg-slate-900 text-white' if _path.startswith('/reports/agent-analysis') else 'bg-white border' }}">客服分析</a>
             </div>
           {% endif %}
         </div>

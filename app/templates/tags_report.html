@@ -80,11 +80,12 @@
         </thead>
         <tbody>
           {% for r in table_rows %}
-            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %} {% if r.level > 0 %}hidden{% endif %}" 
+            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %} {% if r.level > 0 or not r.is_header %}hidden{% endif %}" 
                 data-row-id="{{ r.group_id }}-{% if r.is_header %}header{% else %}{{ loop.index }}{% endif %}"
                 data-level="{{ r.level }}"
                 data-parent="{{ r.parent_id }}"
-                data-group="{{ r.group_id }}">
+                data-group="{{ r.group_id }}"
+                data-is-header="{{ r.is_header }}">
               <td class="py-2 pr-4">
                 {% if r.is_header %}
                   <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')" style="padding-left: {{ r.level * 20 }}px;">
@@ -178,11 +179,15 @@
     const isExpanded = ico && ico.textContent === '▾';
     
     if (isExpanded) {
-      // 折叠：隐藏所有子元素（包括孙子元素）
+      // 折叠：隐藏当前组的明细行和所有子元素
+      // 1. 隐藏当前组的明细行（data-group 相同且非 header）
+      const detailRows = document.querySelectorAll('[data-group="' + groupId + '"][data-is-header="False"]');
+      detailRows.forEach(row => row.classList.add('hidden'));
+      
+      // 2. 隐藏所有子 header 和它们的后代
       const allChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
       allChildren.forEach(child => {
         child.classList.add('hidden');
-        // 同时折叠子元素的图标
         const childGroupId = child.getAttribute('data-group');
         const childIco = document.getElementById('ico-' + childGroupId);
         if (childIco) {
@@ -191,18 +196,28 @@
         // 递归隐藏所有后代
         hideAllDescendants(childGroupId);
       });
+      
       if (ico) ico.textContent = '▸';
     } else {
-      // 展开：只显示直接子元素
-      const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
-      directChildren.forEach(child => {
-        child.classList.remove('hidden');
-      });
+      // 展开：显示当前组的明细行和直接子 header
+      // 1. 显示当前组的明细行
+      const detailRows = document.querySelectorAll('[data-group="' + groupId + '"][data-is-header="False"]');
+      detailRows.forEach(row => row.classList.remove('hidden'));
+      
+      // 2. 显示直接子 header（但不展开它们）
+      const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"][data-is-header="True"]');
+      directChildren.forEach(child => child.classList.remove('hidden'));
+      
       if (ico) ico.textContent = '▾';
     }
   }
   
   function hideAllDescendants(parentId) {
+    // 隐藏该组的所有明细行
+    const detailRows = document.querySelectorAll('[data-group="' + parentId + '"][data-is-header="False"]');
+    detailRows.forEach(row => row.classList.add('hidden'));
+    
+    // 隐藏所有子元素
     const children = document.querySelectorAll('[data-parent="' + parentId + '"]');
     children.forEach(child => {
       child.classList.add('hidden');

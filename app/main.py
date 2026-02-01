@@ -2640,9 +2640,15 @@ def conversations_list(
         )
 
     # total count for pagination
-    total = session.exec(
-        select(func.count(Conversation.id)).where(*conv_where) if conv_where else select(func.count(Conversation.id))
-    ).one()
+    # 注意：如果使用了时间筛选（display_ts），计数查询也需要 join customer_ts_sq
+    count_q = select(func.count(Conversation.id))
+    if start_dt or end_dt:
+        # 时间筛选依赖 display_ts，需要 join customer_ts_sq
+        count_q = count_q.outerjoin(customer_ts_sq, customer_ts_sq.c.cid == Conversation.id)
+    if conv_where:
+        count_q = count_q.where(*conv_where)
+    
+    total = session.exec(count_q).one()
     try:
         total = int(total or 0)
     except Exception:
@@ -5156,6 +5162,363 @@ def get_tag_conversations(
     stmt = stmt.order_by(Conversation.id.desc())
     cids = [row for row in session.exec(stmt).all()]
 
+    return {"cids": cids}
+
+
+# =========================
+# Agent Analysis Report: 客服日期、场景、满意度交叉分析
+# =========================
+
+
+@app.get("/reports/agent-analysis", response_class=HTMLResponse)
+def agent_analysis_report_page(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    group_by: str | None = None,  # day/week/month
+    start: str | None = None,
+    end: str | None = None,
+    platform: str | None = None,
+    agent_user_id: str | None = None,
+):
+    """客服日期、场景、满意度交叉分析报表。
+    
+    多维度展示：客服 -> 日期 -> 场景 -> 满意度 -> 对话数
+    """
+    from sqlalchemy import func, case
+    from datetime import datetime, timedelta
+    
+    def _parse_date(d: str | None):
+        if not d:
+            return None
+        d = d.strip()
+        if not d:
+            return None
+        try:
+            y, m, day = [int(x) for x in d.split("-")]
+            return datetime(y, m, day)
+        except Exception:
+            return None
+    
+    # 参数解析
+    group_by_mode = (group_by or "day").strip() or "day"
+    start_dt = _parse_date(start)
+    end_dt = _parse_date(end)
+    now = datetime.utcnow()
+    today = datetime(now.year, now.month, now.day)
+    
+    # 默认最近7天
+    if not start_dt and not end_dt:
+        end_dt = today - timedelta(days=1)
+        start_dt = end_dt - timedelta(days=6)
+    if start_dt and not end_dt:
+        end_dt = start_dt
+    if end_dt and not start_dt:
+        start_dt = end_dt
+    if start_dt and end_dt and start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
+    
+    # 转换为包含结束日期的范围
+    end_excl = (end_dt + timedelta(days=1)) if end_dt else None
+    
+    platform_f = (platform or "").strip()
+    agent_user_id_int = None
+    try:
+        agent_user_id_int = int(agent_user_id) if agent_user_id else None
+    except Exception:
+        agent_user_id_int = None
+    
+    # Agent role: only see self
+    if user.role == Role.agent:
+        agent_user_id_int = user.id
+    
+    # 获取筛选选项
+    raw_platforms = session.exec(select(Conversation.platform)).all()
+    platform_options = sorted(
+        {
+            (p[0] if isinstance(p, (list, tuple)) else p)
+            for p in raw_platforms
+            if (p[0] if isinstance(p, (list, tuple)) else p)
+        }
+    )
+    users = session.exec(select(User).order_by(User.role.asc(), User.name.asc())).all()
+    agent_options = [
+        {"id": u.id, "label": f"{u.name}（{u.role}）"}
+        for u in users
+        if u.role in (Role.agent, Role.supervisor) and getattr(u, "is_active", True)
+    ]
+    
+    # 获取最新分析
+    latest_subq = (
+        select(func.max(ConversationAnalysis.id).label("analysis_id"))
+        .group_by(ConversationAnalysis.conversation_id)
+    ).subquery()
+    
+    # 实时绑定客服
+    binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
+    
+    # 日期分组表达式
+    conv_date = func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at)
+    if group_by_mode == "week":
+        # PostgreSQL: date_trunc('week', timestamp)
+        date_group = func.date_trunc('week', conv_date)
+    elif group_by_mode == "month":
+        date_group = func.date_trunc('month', conv_date)
+    else:  # day
+        date_group = func.date_trunc('day', conv_date)
+    
+    # 构建查询：客服、日期、场景、满意度 -> 对话数
+    stmt = (
+        select(
+            binding_user_id.label("agent_user_id"),
+            date_group.label("period"),
+            ConversationAnalysis.reception_scenario.label("scenario"),
+            ConversationAnalysis.satisfaction_change.label("satisfaction"),
+            func.count(func.distinct(Conversation.id)).label("cnt"),
+        )
+        .select_from(Conversation)
+        .join(ConversationAnalysis, ConversationAnalysis.conversation_id == Conversation.id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .outerjoin(AgentBinding, and_(
+            AgentBinding.platform == Conversation.platform,
+            AgentBinding.agent_account == Conversation.agent_account
+        ))
+    )
+    
+    # 应用筛选
+    if start_dt:
+        stmt = stmt.where(conv_date >= start_dt)
+    if end_excl:
+        stmt = stmt.where(conv_date < end_excl)
+    if platform_f:
+        stmt = stmt.where(Conversation.platform == platform_f)
+    if agent_user_id_int:
+        stmt = stmt.where(binding_user_id == agent_user_id_int)
+    
+    # 分组统计
+    stmt = stmt.group_by(binding_user_id, date_group, ConversationAnalysis.reception_scenario, ConversationAnalysis.satisfaction_change)
+    stmt = stmt.order_by(binding_user_id.asc(), date_group.asc(), ConversationAnalysis.reception_scenario.asc(), ConversationAnalysis.satisfaction_change.asc())
+    
+    rows = session.exec(stmt).all()
+    
+    # 构建用户映射
+    user_by_id = {u.id: u for u in users if u.id}
+    
+    # 构建多级数据结构
+    data_tree = {}
+    for agent_id, period, scenario, satisfaction, cnt in rows:
+        agent_id = int(agent_id or 0)
+        if agent_id not in data_tree:
+            data_tree[agent_id] = {}
+        
+        period_key = period.date().isoformat() if period else "未知"
+        if period_key not in data_tree[agent_id]:
+            data_tree[agent_id][period_key] = {}
+        
+        scenario = str(scenario or "未知")
+        if scenario not in data_tree[agent_id][period_key]:
+            data_tree[agent_id][period_key][scenario] = {}
+        
+        satisfaction = str(satisfaction or "未知")
+        data_tree[agent_id][period_key][scenario][satisfaction] = int(cnt or 0)
+    
+    # 生成表格行（多级展开）
+    table_rows = []
+    
+    # 预定义场景和满意度顺序
+    scenario_order = ["售前", "售后", "售前和售后", "其他接待场景", "无法判定", "未知"]
+    satisfaction_order = ["大幅减少", "小幅减少", "无显著变化", "小幅增加", "大幅增加", "无法判定", "未知"]
+    
+    for agent_id in sorted(data_tree.keys()):
+        agent_user = user_by_id.get(agent_id)
+        agent_name = agent_user.name if agent_user else f"未绑定客服({agent_id})"
+        
+        # Level 0: 客服汇总
+        agent_total = sum(
+            sum(
+                sum(scenario_dict.values())
+                for scenario_dict in period_dict.values()
+            )
+            for period_dict in data_tree[agent_id].values()
+        )
+        
+        table_rows.append({
+            "level": 0,
+            "group_id": f"agent-{agent_id}",
+            "parent_id": None,
+            "is_header": True,
+            "label": agent_name,
+            "count": agent_total,
+            "details": "",
+        })
+        
+        # Level 1: 日期
+        for period_key in sorted(data_tree[agent_id].keys()):
+            period_dict = data_tree[agent_id][period_key]
+            period_total = sum(
+                sum(scenario_dict.values())
+                for scenario_dict in period_dict.values()
+            )
+            
+            table_rows.append({
+                "level": 1,
+                "group_id": f"agent-{agent_id}-period-{period_key}",
+                "parent_id": f"agent-{agent_id}",
+                "is_header": True,
+                "label": period_key,
+                "count": period_total,
+                "details": "",
+            })
+            
+            # Level 2: 场景
+            for scenario in scenario_order:
+                if scenario not in period_dict:
+                    continue
+                
+                scenario_dict = period_dict[scenario]
+                scenario_total = sum(scenario_dict.values())
+                
+                table_rows.append({
+                    "level": 2,
+                    "group_id": f"agent-{agent_id}-period-{period_key}-scenario-{scenario}",
+                    "parent_id": f"agent-{agent_id}-period-{period_key}",
+                    "is_header": True,
+                    "label": scenario,
+                    "count": scenario_total,
+                    "details": "",
+                })
+                
+                # Level 3: 满意度（明细）
+                for satisfaction in satisfaction_order:
+                    if satisfaction not in scenario_dict:
+                        continue
+                    
+                    cnt = scenario_dict[satisfaction]
+                    
+                    table_rows.append({
+                        "level": 3,
+                        "group_id": f"agent-{agent_id}-period-{period_key}-scenario-{scenario}",
+                        "parent_id": f"agent-{agent_id}-period-{period_key}-scenario-{scenario}",
+                        "is_header": False,
+                        "label": satisfaction,
+                        "count": cnt,
+                        "details": f"客服={agent_name}, 日期={period_key}, 场景={scenario}, 满意度={satisfaction}",
+                        "agent_id": agent_id,
+                        "period": period_key,
+                        "scenario": scenario,
+                        "satisfaction": satisfaction,
+                    })
+    
+    return templates.TemplateResponse(
+        "agent_analysis.html",
+        {
+            "request": request,
+            "user": user,
+            "table_rows": table_rows,
+            "filters": {
+                "group_by": group_by_mode,
+                "start": start_dt.date().isoformat() if start_dt else "",
+                "end": end_dt.date().isoformat() if end_dt else "",
+                "platform": platform_f,
+                "agent_user_id": str(agent_user_id_int) if agent_user_id_int else "",
+            },
+            "platform_options": platform_options,
+            "agent_options": agent_options,
+            "group_by_options": [
+                ("day", "按天"),
+                ("week", "按周"),
+                ("month", "按月"),
+            ],
+        },
+    )
+
+
+@app.get("/api/reports/agent-analysis/conversations")
+def get_agent_analysis_conversations(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    agent_id: int | None = None,
+    period: str | None = None,
+    scenario: str | None = None,
+    satisfaction: str | None = None,
+    platform: str | None = None,
+):
+    """获取指定条件的对话列表（CID）"""
+    from sqlalchemy import func
+    
+    if not all([period, scenario, satisfaction]):
+        return {"error": "缺少必需参数", "cids": []}
+    
+    def _parse_date(d: str | None):
+        if not d:
+            return None
+        d = d.strip()
+        if not d:
+            return None
+        try:
+            y, m, day = [int(x) for x in d.split("-")]
+            return datetime(y, m, day)
+        except Exception:
+            return None
+    
+    period_dt = _parse_date(period)
+    if not period_dt:
+        return {"error": "日期格式错误", "cids": []}
+    
+    # Agent role: only see self
+    if user.role == Role.agent:
+        agent_id = user.id
+    
+    # 获取最新分析
+    latest_subq = (
+        select(func.max(ConversationAnalysis.id).label("analysis_id"))
+        .group_by(ConversationAnalysis.conversation_id)
+    ).subquery()
+    
+    # 实时绑定客服
+    binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
+    
+    conv_date = func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at)
+    
+    # 按天查询
+    period_start = period_dt
+    period_end = period_dt + timedelta(days=1)
+    
+    platform_f = (platform or "").strip()
+    
+    stmt = (
+        select(Conversation.id)
+        .select_from(Conversation)
+        .join(ConversationAnalysis, ConversationAnalysis.conversation_id == Conversation.id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .outerjoin(AgentBinding, and_(
+            AgentBinding.platform == Conversation.platform,
+            AgentBinding.agent_account == Conversation.agent_account
+        ))
+        .where(conv_date >= period_start)
+        .where(conv_date < period_end)
+    )
+    
+    # 处理场景和满意度筛选（包括空值/"未知"）
+    if scenario == "未知":
+        stmt = stmt.where((ConversationAnalysis.reception_scenario == "") | (ConversationAnalysis.reception_scenario == None))
+    else:
+        stmt = stmt.where(ConversationAnalysis.reception_scenario == scenario)
+    
+    if satisfaction == "未知":
+        stmt = stmt.where((ConversationAnalysis.satisfaction_change == "") | (ConversationAnalysis.satisfaction_change == None))
+    else:
+        stmt = stmt.where(ConversationAnalysis.satisfaction_change == satisfaction)
+    
+    if agent_id:
+        stmt = stmt.where(binding_user_id == agent_id)
+    if platform_f:
+        stmt = stmt.where(Conversation.platform == platform_f)
+    
+    stmt = stmt.order_by(Conversation.id.desc())
+    cids = [row for row in session.exec(stmt).all()]
+    
     return {"cids": cids}
 
 

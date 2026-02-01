@@ -11,9 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 客服改写练习提交和主管评分反馈
 - 标签管理与合并功能（新增：2026-01-30）
 - **自动质检与未绑定账号通知（新增：2026-02-02）**
-  - 导入后自动检测未绑定客服账号并飞书通知
-  - 每小时自动检查符合条件的对话并触发AI质检
-  - 详见：`docs/AUTO_QC_QUICKSTART.md`
+ - 导入后自动检测未绑定客服账号并飞书通知
+ - 每小时自动检查符合条件的对话并触发AI质检
+ - 详见：`docs/AUTO_QC_QUICKSTART.md`
+- **客服分析报表（新增：2026-02-02）**
+ - 多维度交叉分析：客服 → 日期 → 场景 → 满意度
+ - 支持按天/周/月分组统计
+ - 详见：`docs/AGENT_ANALYSIS_REPORT.md`
 
 ## 快速启动
 
