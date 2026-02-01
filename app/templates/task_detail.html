@@ -37,37 +37,17 @@
 
     <div class="mt-4">
       <h2 class="font-semibold mb-2">AI提示（最新质检输出）</h2>
-      {% if analyses|length > 0 %}
-        {% set a = analyses[0] %}
-        <div class="border rounded-xl p-3 {% if a.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
+      {% if latest_analysis %}
+        <div class="border rounded-xl p-3 {% if latest_analysis.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
           <div class="flex items-center justify-between">
-            <div class="font-medium text-sm">{{ a.dialog_type or "对话" }}</div>
-            {% if a.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
+            <div class="font-medium text-sm">{{ latest_analysis.dialog_type or "对话" }}</div>
+            {% if latest_analysis.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
           </div>
 
-          <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <div>
-              <div class="text-xs text-slate-500">售前负面标签</div>
-              <div class="whitespace-pre-wrap">{{ a.pre_negative_tags or "-" }}</div>
-            </div>
-            <div>
-              <div class="text-xs text-slate-500">售后负面标签</div>
-              <div class="whitespace-pre-wrap">{{ a.after_negative_tags or "-" }}</div>
-            </div>
-          </div>
-
-          {% if a.tag_parsing %}
-            <div class="mt-2 text-xs text-slate-500">评价解析</div>
-            <ul class="list-disc pl-5 text-sm">
-              {% for part in a.tag_parsing.split('&&&') %}
-                {% set seg = part.split('$$$') %}
-                <li><span class="font-medium">{{ seg[0] }}</span>{% if seg|length > 1 and seg[1] %}<span class="text-slate-600">：{{ seg[1] }}</span>{% endif %}</li>
-              {% endfor %}
-            </ul>
+          {% if latest_analysis.day_summary %}
+            <div class="mt-2 text-xs text-slate-500">当日对话summary</div>
+            <div class="text-sm whitespace-pre-wrap">{{ latest_analysis.day_summary }}</div>
           {% endif %}
-
-          <div class="mt-2 text-xs text-slate-500">服务提升建议</div>
-          <div class="text-sm whitespace-pre-wrap">{{ a.service_suggestion or "-" }}</div>
         </div>
       {% else %}
         <div class="text-sm text-slate-500">暂无AI质检输出</div>

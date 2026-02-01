@@ -73,24 +73,25 @@
             <th class="py-2 pr-4">一级分类</th>
             <th class="py-2 pr-4">二级标签</th>
             <th class="py-2 pr-4">对话数</th>
+            <th class="py-2 pr-4">标签占比</th>
             <th class="py-2 pr-4">环比</th>
             <th class="py-2 pr-4">同比</th>
           </tr>
         </thead>
         <tbody>
           {% for r in table_rows %}
-            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %}">
+            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %}" {% if not r.is_header %}data-group="{{ r.group_id }}"{% endif %}>
               <td class="py-2 pr-4">
                 {% if r.is_header %}
                   <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')">
                     <span id="ico-{{ r.group_id }}">▾</span> {{ r.group_label }}
                   </button>
                 {% else %}
-                  <div class="pl-5" data-group="{{ r.group_id }}">{{ r.group_label }}</div>
+                  <div class="pl-5">{{ r.group_label }}</div>
                 {% endif %}
               </td>
               <td class="py-2 pr-4">
-                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.category_name }}</span>{% endif %}
+                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}{{ r.category_name }}{% endif %}
               </td>
               <td class="py-2 pr-4">
                 {% if r.is_header %}
@@ -101,11 +102,10 @@
               </td>
               <td class="py-2 pr-4">
                 {% if r.is_header %}
-                  <span class="text-slate-400">—</span>
+                  <span class="font-semibold">{{ r.current_sum }}</span>
                 {% else %}
                   <button type="button" 
                           class="underline text-blue-600 hover:text-blue-800" 
-                          data-group="{{ r.group_id }}"
                           data-tag-id="{{ r.tag_id }}"
                           data-platform="{{ r.platform }}"
                           data-agent-user-id="{{ r.agent_user_id }}"
@@ -116,10 +116,13 @@
                 {% endif %}
               </td>
               <td class="py-2 pr-4">
-                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.mom }}</span>{% endif %}
+                {% if r.is_header %}{{ r.ratio_sum }}{% else %}{{ r.ratio }}{% endif %}
               </td>
               <td class="py-2 pr-4">
-                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}<span data-group="{{ r.group_id }}">{{ r.yoy }}</span>{% endif %}
+                {% if r.is_header %}{{ r.mom_sum }}{% else %}{{ r.mom }}{% endif %}
+              </td>
+              <td class="py-2 pr-4">
+                {% if r.is_header %}{{ r.yoy_sum }}{% else %}{{ r.yoy }}{% endif %}
               </td>
             </tr>
           {% endfor %}
@@ -167,7 +170,7 @@
   };
 
   function toggleGroup(groupId) {
-    const rows = document.querySelectorAll('[data-group="' + groupId + '"]');
+    const rows = document.querySelectorAll('tr[data-group="' + groupId + '"]');
     const ico = document.getElementById('ico-' + groupId);
     if (!rows || rows.length === 0) return;
     const hidden = rows[0].classList.contains('hidden');

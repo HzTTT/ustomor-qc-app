@@ -21,8 +21,6 @@
         <th class="text-left px-4 py-3">对话ID</th>
         <th class="text-left px-4 py-3">平台</th>
         <th class="text-left px-4 py-3">对话类型</th>
-        <th class="text-left px-4 py-3">售前负面标签</th>
-        <th class="text-left px-4 py-3">售后负面标签</th>
         <th class="text-left px-4 py-3">摘要</th>
         <th class="text-right px-4 py-3">操作</th>
       </tr>
@@ -34,8 +32,6 @@
           <td class="px-4 py-3">{{ c.external_id }}</td>
           <td class="px-4 py-3">{{ c.platform }}</td>
           <td class="px-4 py-3">{{ a.dialog_type if a else "-" }}</td>
-          <td class="px-4 py-3">{{ a.pre_negative_tags if a and a.pre_negative_tags else "-" }}</td>
-          <td class="px-4 py-3">{{ a.after_negative_tags if a and a.after_negative_tags else "-" }}</td>
           <td class="px-4 py-3 text-slate-600">{{ (a.day_summary if a else "")[:60] }}{% if a and (a.day_summary or "")|length > 60 %}...{% endif %}</td>
           <td class="px-4 py-3 text-right"><a class="underline" href="/conversations/{{ c.id }}">查看对话</a></td>
         </tr>

@@ -109,8 +109,47 @@
 
 
   <div class="space-y-4">
+    <!-- 标签体系模块（移到AI质检输出上方） -->
     <div class="bg-white border rounded-2xl p-4">
-      <h2 class="font-semibold mb-3">AI质检输出（最新在前）</h2>
+      <h2 class="font-semibold mb-3">标签体系（命中标签）</h2>
+      <div class="text-xs text-slate-500 mb-3">点击标签可高亮左侧对话中的引用范围</div>
+      
+      {% if tag_groups and tag_groups|length > 0 %}
+        <div class="space-y-3">
+          {% for g in tag_groups %}
+            <div class="border rounded-xl p-3 bg-slate-50/50">
+              <div class="text-sm font-medium text-slate-700 mb-2">{{ g.category }}</div>
+              <div class="flex flex-wrap gap-2">
+                {% for it in g['items'] %}
+                  {# 只显示命中的标签 - 绿色 #}
+                  <span class="inline-flex items-center gap-1">
+                    <button type="button" 
+                      class="tag-system-btn tag-hit inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full border-2 border-green-500 bg-green-50 text-sm font-medium text-green-700 hover:bg-green-100 cursor-pointer transition-colors"
+                      title="✓ 已命中\n\n判定标准：{{ it.standard }}{% if it.reason %}\n\n命中原因：{{ it.reason }}{% endif %}"
+                      data-tag-id="{{ it.tag_id }}"
+                      data-evidence="{{ it.evidence_json|e }}"
+                      data-is-hit="true">
+                      <span class="text-green-600">✓</span> {{ it.tag }}
+                    </button>
+                    {% if user.role in ['admin','supervisor'] and it.hit_id %}
+                      <form method="post" action="/conversations/{{ conv.id }}/tags/ai/remove" class="inline" onsubmit="return confirm('确定要删除这个AI标签吗？');">
+                        <input type="hidden" name="hit_id" value="{{ it.hit_id }}" />
+                        <button type="submit" class="text-red-600 hover:text-red-800 text-xs px-1" title="删除AI标签">×</button>
+                      </form>
+                    {% endif %}
+                  </span>
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-sm text-slate-500">本对话暂无命中标签</div>
+      {% endif %}
+    </div>
+
+    <div class="bg-white border rounded-2xl p-4">
+      <h2 class="font-semibold mb-3">AI质检输出（最新）</h2>
 
       {% if latest_analysis %}
         <div class="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
@@ -124,109 +163,33 @@
           </div>
         </div>
       {% endif %}
-      {% if tag_groups and (tag_groups|length > 0) %}
-        <div class="mb-3 border rounded-xl p-3 bg-slate-50">
-          <div class="text-xs text-slate-500">第三大块：系统标签命中（点击标签高亮引用）</div>
-          <div class="mt-2 space-y-2">
-            {% for g in tag_groups %}
-              <div>
-                <div class="text-sm font-medium">{{ g.category }}</div>
-                <div class="mt-1 flex flex-wrap gap-2">
-                  {% for it in g.items %}
-                    <button type="button" class="tag-highlight-btn inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-white text-sm hover:bg-slate-100 cursor-pointer" title="{{ it.standard }}{% if it.reason %}\n\n原因：{{ it.reason }}{% endif %}" data-evidence="{{ it.evidence_json|e }}">
-                      {{ it.tag }}
-                    </button>
-                  {% endfor %}
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-        </div>
-      {% endif %}
-      {% if analyses|length == 0 %}
+      {% if not latest_analysis %}
         <div class="text-sm text-slate-500">暂无AI质检输出</div>
       {% endif %}
 
-      <div class="space-y-3">
-        {% for a in analyses %}
-          <div class="border rounded-xl p-3 {% if a.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
-            <div class="flex items-center justify-between text-sm">
-              <div class="font-medium">{{ a.reception_scenario or a.dialog_type or "对话" }}</div>
-              {% if a.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
-            </div>
-
-            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <div>
-                <div class="text-xs text-slate-500">售前正面标签</div>
-                <div class="whitespace-pre-wrap">{{ a.pre_positive_tags or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">售后正面标签</div>
-                <div class="whitespace-pre-wrap">{{ a.after_positive_tags or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">售前负面标签</div>
-                <div class="whitespace-pre-wrap">{{ a.pre_negative_tags or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">售后负面标签</div>
-                <div class="whitespace-pre-wrap">{{ a.after_negative_tags or "-" }}</div>
-              </div>
-            </div>
-
-            {% if a.day_summary %}
-              <div class="mt-3 text-sm">
-                <div class="text-slate-500 text-xs">当日对话summary</div>
-                <div class="whitespace-pre-wrap">{{ a.day_summary }}</div>
-              </div>
-            {% endif %}
-
-            {% if a.tag_parsing %}
-              <div class="mt-3 text-sm">
-                <div class="text-slate-500 text-xs">评价解析</div>
-                <ul class="list-disc pl-5">
-                  {% for part in a.tag_parsing.split('&&&') %}
-                    {% set seg = part.split('$$$') %}
-                    <li>
-                      <span class="font-medium">{{ seg[0] }}</span>
-                      {% if seg|length > 1 and seg[1] %}
-                        <span class="text-slate-600">：{{ seg[1] }}</span>
-                      {% endif %}
-                    </li>
-                  {% endfor %}
-                </ul>
-              </div>
-            {% endif %}
-
-            <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <div>
-                <div class="text-xs text-slate-500">商品提升建议</div>
-                <div class="whitespace-pre-wrap">{{ a.product_suggestion or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">服务提升建议</div>
-                <div class="whitespace-pre-wrap">{{ a.service_suggestion or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">售前规则更新建议</div>
-                <div class="whitespace-pre-wrap">{{ a.pre_rule_update or "-" }}</div>
-              </div>
-              <div>
-                <div class="text-xs text-slate-500">售后规则更新建议</div>
-                <div class="whitespace-pre-wrap">{{ a.after_rule_update or "-" }}</div>
-              </div>
-            </div>
-
-            {% if a.tag_update_suggestion %}
-              <div class="mt-3 text-sm">
-                <div class="text-slate-500 text-xs">标签更新建议</div>
-                <div class="whitespace-pre-wrap">{{ a.tag_update_suggestion }}</div>
-              </div>
-            {% endif %}
-
+      {% if latest_analysis %}
+        <div class="border rounded-xl p-3 {% if latest_analysis.flag_for_review %}bg-red-50{% else %}bg-white{% endif %}">
+          <div class="flex items-center justify-between text-sm">
+            <div class="font-medium">{{ latest_analysis.reception_scenario or latest_analysis.dialog_type or "对话" }}</div>
+            {% if latest_analysis.flag_for_review %}<div class="text-xs text-red-600 font-medium">需复核</div>{% endif %}
           </div>
-        {% endfor %}
-      </div>
+
+          {% if latest_analysis.day_summary %}
+            <div class="mt-3 text-sm">
+              <div class="text-slate-500 text-xs">当日对话summary</div>
+              <div class="whitespace-pre-wrap">{{ latest_analysis.day_summary }}</div>
+            </div>
+          {% endif %}
+
+          {% if latest_analysis.tag_update_suggestion %}
+            <div class="mt-3 text-sm">
+              <div class="text-slate-500 text-xs">标签更新建议</div>
+              <div class="whitespace-pre-wrap">{{ latest_analysis.tag_update_suggestion }}</div>
+            </div>
+          {% endif %}
+
+        </div>
+      {% endif %}
     </div>
 
     {% if user.role in ['admin','supervisor'] %}
@@ -325,26 +288,59 @@
 
 <script>
 (function () {
+  // 清除所有高亮的公共函数
+  function clearAllHighlights() {
+    document.querySelectorAll('.msg-cell').forEach(function (el) {
+      el.classList.remove('tag-highlight');
+    });
+    // 取消所有标签的选中状态
+    document.querySelectorAll('.tag-system-btn').forEach(function (el) {
+      el.classList.remove('tag-selected');
+    });
+  }
+
+  // 根据 evidence 高亮消息
+  function highlightByEvidence(evidenceJson) {
+    var evidence = [];
+    try {
+      evidence = evidenceJson ? JSON.parse(evidenceJson) : [];
+    } catch (e) {
+      evidence = [];
+    }
+    if (!Array.isArray(evidence) || evidence.length === 0) return;
+    evidence.forEach(function (entry) {
+      var indices = entry && entry.indices;
+      if (!Array.isArray(indices)) return;
+      indices.forEach(function (idx) {
+        var el = document.getElementById('msg-' + idx);
+        if (el) el.classList.add('tag-highlight');
+      });
+    });
+  }
+
+  // 标签体系模块的按钮点击
+  document.querySelectorAll('.tag-system-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var isHit = this.getAttribute('data-is-hit') === 'true';
+      var evidenceJson = this.getAttribute('data-evidence') || '';
+      
+      clearAllHighlights();
+      
+      // 添加选中状态
+      this.classList.add('tag-selected');
+      
+      if (isHit && evidenceJson) {
+        highlightByEvidence(evidenceJson);
+      }
+    });
+  });
+
+  // 旧的标签命中按钮（保持向后兼容）
   document.querySelectorAll('.tag-highlight-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var raw = this.getAttribute('data-evidence');
-      try {
-        var evidence = raw ? JSON.parse(raw) : [];
-      } catch (e) {
-        evidence = [];
-      }
-      document.querySelectorAll('.msg-cell').forEach(function (el) {
-        el.classList.remove('tag-highlight');
-      });
-      if (!Array.isArray(evidence) || evidence.length === 0) return;
-      evidence.forEach(function (entry) {
-        var indices = entry && entry.indices;
-        if (!Array.isArray(indices)) return;
-        indices.forEach(function (idx) {
-          var el = document.getElementById('msg-' + idx);
-          if (el) el.classList.add('tag-highlight');
-        });
-      });
+      clearAllHighlights();
+      highlightByEvidence(raw);
     });
   });
 
@@ -354,9 +350,7 @@
       var startIdx = parseInt(this.getAttribute('data-start') || '0', 10);
       var endIdx = parseInt(this.getAttribute('data-end') || '0', 10);
       
-      document.querySelectorAll('.msg-cell').forEach(function (el) {
-        el.classList.remove('tag-highlight');
-      });
+      clearAllHighlights();
       
       // Highlight messages in the range
       for (var i = startIdx; i <= endIdx; i++) {
@@ -369,5 +363,7 @@
 </script>
 <style>
 .msg-cell.tag-highlight { box-shadow: 0 0 0 2px rgb(59 130 246); background-color: rgb(219 234 254) !important; }
+.tag-system-btn.tag-selected { box-shadow: 0 0 0 2px rgb(59 130 246); }
+.tag-system-btn.tag-hit.tag-selected { box-shadow: 0 0 0 2px rgb(22 163 74); }
 </style>
 {% endblock %}

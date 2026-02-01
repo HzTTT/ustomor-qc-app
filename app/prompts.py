@@ -62,10 +62,9 @@ new_tag_suggestions: [{
   "reason": "为什么建议新增此标签"
 }]
 
-兼容保留：dialog_type、pre_positive_tags、after_positive_tags、pre_negative_tags、after_negative_tags、
-day_summary、tag_parsing、product_suggestion、service_suggestion、pre_rule_update、after_rule_update、
-tag_update_suggestion、customer_issue_highlights、must_read_highlights、overall_score、sentiment、
-issue_level、problem_types、flag_for_review。可填空字符串/空数组。
+兼容保留（已废弃字段可填空字符串）：
+- 已废弃（填空字符串即可）：pre_positive_tags、after_positive_tags、pre_negative_tags、after_negative_tags、tag_parsing、product_suggestion、service_suggestion、pre_rule_update、after_rule_update
+- 保留字段：dialog_type、day_summary、tag_update_suggestion、customer_issue_highlights、must_read_highlights、overall_score、sentiment、issue_level、problem_types、flag_for_review
 """
 
 
@@ -177,16 +176,18 @@ def analysis_user_prompt(
         ],
         # === 兼容：与 AI输出.xlsx 对齐 ===
         "dialog_type": "售前|售后|售前售后|其他",
-        "pre_positive_tags": "标签A;标签B",
-        "after_positive_tags": "标签A;标签B",
-        "pre_negative_tags": "标签A;标签B",
-        "after_negative_tags": "标签A;标签B",
+        # 已废弃字段（填空字符串）
+        "pre_positive_tags": "",
+        "after_positive_tags": "",
+        "pre_negative_tags": "",
+        "after_negative_tags": "",
+        "tag_parsing": "",
+        "product_suggestion": "",
+        "service_suggestion": "",
+        "pre_rule_update": "",
+        "after_rule_update": "",
+        # 保留字段
         "day_summary": "...",
-        "tag_parsing": "标签A$$$解析原因A&&&标签B$$$解析原因B",
-        "product_suggestion": "...",
-        "service_suggestion": "...",
-        "pre_rule_update": "...",
-        "after_rule_update": "...",
         "tag_update_suggestion": "标签A;标签B",
         "customer_issue_highlights": [
             {"message_index": 0, "sender": "buyer|agent", "quote": "...", "tag": "...", "why": "..."}

@@ -31,6 +31,14 @@
       <label class="block text-xs text-slate-500 mb-1">消息数阈值</label>
       <input type="number" name="min_messages" value="{{ threshold_messages }}" min="1" max="500" class="px-3 py-2 rounded-xl border w-28" />
     </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">是否已AI质检</label>
+      <select name="has_analysis" class="px-3 py-2 rounded-xl border text-sm">
+        <option value="">全部</option>
+        <option value="1" {% if has_analysis == "1" %}selected{% endif %}>已质检</option>
+        <option value="0" {% if has_analysis == "0" %}selected{% endif %}>未质检</option>
+      </select>
+    </div>
     <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
   </form>
 </div>

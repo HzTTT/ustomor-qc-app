@@ -107,8 +107,10 @@
             <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
             <div class="text-xs text-slate-500">{{ c.uploaded_at.strftime('%Y-%m-%d') if c.uploaded_at else '' }} · {{ c.platform or '-' }}</div>
           </div>
-          <div class="mt-1 text-xs text-slate-500">正向标签</div>
-          <div class="text-sm whitespace-pre-wrap">{{ (a.after_positive_tags or a.pre_positive_tags) or '-' }}</div>
+          {% if a and a.day_summary %}
+            <div class="mt-1 text-xs text-slate-500">对话摘要</div>
+            <div class="text-sm whitespace-pre-wrap">{{ a.day_summary|truncate(100, True, "…") }}</div>
+          {% endif %}
         </div>
       {% endfor %}
       {% if positive_convos|length == 0 %}
@@ -130,8 +132,10 @@
             <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
             <div class="text-xs text-slate-500">{{ c.uploaded_at.strftime('%Y-%m-%d') if c.uploaded_at else '' }} · {{ c.platform or '-' }}</div>
           </div>
-          <div class="mt-1 text-xs text-slate-500">负向标签</div>
-          <div class="text-sm whitespace-pre-wrap">{{ (a.after_negative_tags or a.pre_negative_tags) or '-' }}</div>
+          {% if a and a.day_summary %}
+            <div class="mt-1 text-xs text-slate-500">对话摘要</div>
+            <div class="text-sm whitespace-pre-wrap">{{ a.day_summary|truncate(100, True, "…") }}</div>
+          {% endif %}
           {% if user.role in ['admin','supervisor'] %}
             <div class="mt-2">
               <a class="text-sm underline" href="/conversations/{{ c.id }}#create_task">生成训练任务</a>
@@ -167,35 +171,6 @@
     </div>
   </div>
 
-  <div class="bg-white border rounded-2xl p-4">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="font-semibold">4) VOC（商品/服务优缺点）</h2>
-      <div class="text-xs text-slate-500">点击可回到对应对话</div>
-    </div>
-    <div class="space-y-2">
-      {% for it in voc_items %}
-        {% set c = it.conv %}
-        {% set a = it.analysis %}
-        <div class="border rounded-xl p-3">
-          <div class="flex items-center justify-between">
-            <div class="text-sm font-medium"><a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a></div>
-            <div class="text-xs text-slate-500">{{ c.platform or '-' }}</div>
-          </div>
-          {% if a.product_suggestion %}
-            <div class="mt-2 text-xs text-slate-500">商品</div>
-            <div class="text-sm whitespace-pre-wrap">{{ a.product_suggestion }}</div>
-          {% endif %}
-          {% if a.service_suggestion %}
-            <div class="mt-2 text-xs text-slate-500">服务</div>
-            <div class="text-sm whitespace-pre-wrap">{{ a.service_suggestion }}</div>
-          {% endif %}
-        </div>
-      {% endfor %}
-      {% if voc_items|length == 0 %}
-        <div class="text-sm text-slate-500">暂无</div>
-      {% endif %}
-    </div>
-  </div>
 </div>
 
 <div class="mt-6 text-xs text-slate-500">
