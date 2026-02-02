@@ -3,7 +3,10 @@
 <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
   <div>
     <h1 class="text-2xl font-semibold">AI质检</h1>
-    <div class="text-sm text-slate-500 mt-1">筛选时间范围内、消息数≥{{ threshold_messages }} 的对话，默认已帮你圈选可质检的对话。</div>
+    <div class="text-sm text-slate-500 mt-1">
+      筛选时间范围内、消息数≥{{ threshold_messages }} 的对话，默认已帮你圈选可质检的对话。
+      <span class="font-medium text-slate-700">共 {{ total_count }} 条</span>
+    </div>
   </div>
   <div class="flex items-center gap-2">
     <a href="/conversations" class="px-3 py-2 rounded-xl border bg-white text-sm hover:bg-slate-50">聊天记录</a>
@@ -39,6 +42,15 @@
         <option value="0" {% if has_analysis == "0" %}selected{% endif %}>未质检</option>
       </select>
     </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">每页显示</label>
+      <select name="per_page" class="px-3 py-2 rounded-xl border text-sm w-24">
+        <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+        <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+        <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+      </select>
+    </div>
     <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
   </form>
 </div>
@@ -47,6 +59,8 @@
   <input type="hidden" name="start_date" value="{{ start_date }}" />
   <input type="hidden" name="end_date" value="{{ end_date }}" />
   <input type="hidden" name="min_messages" value="{{ threshold_messages }}" />
+  <input type="hidden" name="page" value="{{ current_page }}" />
+  <input type="hidden" name="per_page" value="{{ per_page }}" />
   <div class="mb-3 flex flex-wrap items-center gap-2">
     <button type="button" id="select-all" class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">全选</button>
     <button type="button" id="invert" class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">反选</button>
@@ -97,6 +111,48 @@
       </tbody>
     </table>
   </div>
+
+  {% if total_pages > 1 %}
+  <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+    <div class="text-sm text-slate-500">
+      第 {{ current_page }} / {{ total_pages }} 页，共 {{ total_count }} 条记录
+      （当前页显示 {{ convos|length }} 条）
+    </div>
+    <div class="flex items-center gap-2">
+      {% if current_page > 1 %}
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}&min_messages={{ threshold_messages }}&has_analysis={{ has_analysis }}&per_page={{ per_page }}&page=1" 
+           class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">首页</a>
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}&min_messages={{ threshold_messages }}&has_analysis={{ has_analysis }}&per_page={{ per_page }}&page={{ current_page - 1 }}" 
+           class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">上一页</a>
+      {% else %}
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-100 text-slate-400 text-sm">首页</span>
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-100 text-slate-400 text-sm">上一页</span>
+      {% endif %}
+
+      {% set start_page = [1, current_page - 2]|max %}
+      {% set end_page = [total_pages, current_page + 2]|min %}
+      
+      {% for p in range(start_page, end_page + 1) %}
+        {% if p == current_page %}
+          <span class="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-sm font-medium">{{ p }}</span>
+        {% else %}
+          <a href="?start_date={{ start_date }}&end_date={{ end_date }}&min_messages={{ threshold_messages }}&has_analysis={{ has_analysis }}&per_page={{ per_page }}&page={{ p }}" 
+             class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">{{ p }}</a>
+        {% endif %}
+      {% endfor %}
+
+      {% if current_page < total_pages %}
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}&min_messages={{ threshold_messages }}&has_analysis={{ has_analysis }}&per_page={{ per_page }}&page={{ current_page + 1 }}" 
+           class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">下一页</a>
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}&min_messages={{ threshold_messages }}&has_analysis={{ has_analysis }}&per_page={{ per_page }}&page={{ total_pages }}" 
+           class="px-3 py-1.5 rounded-xl border bg-white text-sm hover:bg-slate-50">末页</a>
+      {% else %}
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-100 text-slate-400 text-sm">下一页</span>
+        <span class="px-3 py-1.5 rounded-xl border bg-slate-100 text-slate-400 text-sm">末页</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </form>
 
 <script>

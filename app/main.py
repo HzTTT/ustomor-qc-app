@@ -4054,6 +4054,8 @@ def qc_daily_page(
     end_date: str = "",
     min_messages: str = "",
     has_analysis: str = "",
+    page: str = "",
+    per_page: str = "",
     user: User = Depends(require_role("admin", "supervisor")),
     session: Session = Depends(get_session),
 ):
@@ -4067,6 +4069,19 @@ def qc_daily_page(
     except Exception:
         threshold = 5
     threshold = max(1, min(500, threshold))
+
+    # 分页参数
+    try:
+        current_page = int((page or "").strip() or 1)
+    except Exception:
+        current_page = 1
+    current_page = max(1, current_page)
+
+    try:
+        items_per_page = int((per_page or "").strip() or 50)
+    except Exception:
+        items_per_page = 50
+    items_per_page = max(10, min(200, items_per_page))
 
     pairs = _qc_conversations_in_range(session, start_date=start_s, end_date=end_s, threshold_messages=threshold)
     convos = [p[0] for p in pairs]
@@ -4089,12 +4104,24 @@ def qc_daily_page(
         convos = [p[0] for p in pairs]
         rounds_by_conv = {p[0].id: p[1] for p in pairs if p[0].id}
         conv_ids = [int(c.id) for c in convos if c.id]
+
+    # 计算总数和分页
+    total_count = len(convos)
+    total_pages = (total_count + items_per_page - 1) // items_per_page if total_count > 0 else 1
+    current_page = min(current_page, total_pages)
+
+    # 分页切片
+    start_idx = (current_page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    convos_page = convos[start_idx:end_idx]
+    conv_ids_page = [int(c.id) for c in convos_page if c.id]
+
     pending = set()
-    if conv_ids:
+    if conv_ids_page:
         pending = set(
             session.exec(
                 select(AIAnalysisJob.conversation_id).where(
-                    AIAnalysisJob.conversation_id.in_(conv_ids),
+                    AIAnalysisJob.conversation_id.in_(conv_ids_page),
                     AIAnalysisJob.status.in_(["pending", "running"]),
                 )
             ).all()
@@ -4108,9 +4135,13 @@ def qc_daily_page(
         end_date=end_s,
         threshold_messages=threshold,
         has_analysis=has_analysis_norm,
-        convos=convos,
+        convos=convos_page,
         rounds_by_conv=rounds_by_conv,
         pending_ids=pending,
+        current_page=current_page,
+        total_pages=total_pages,
+        total_count=total_count,
+        per_page=items_per_page,
         ok=request.query_params.get("ok"),
         error=request.query_params.get("error"),
     )
@@ -4131,6 +4162,10 @@ async def qc_daily_batch_analyze(
         threshold = 5
     threshold = max(1, min(500, threshold))
 
+    # 分页参数
+    page_s = (form.get("page") or "").strip() or "1"
+    per_page_s = (form.get("per_page") or "").strip() or "50"
+
     raw_list = form.getlist("conversation_ids")
     ids: list[int] = []
     for raw in raw_list:
@@ -4143,7 +4178,7 @@ async def qc_daily_batch_analyze(
             continue
 
     if not ids:
-        return _redirect(f"/qc/daily?start_date={start_s}&end_date={end_s}&min_messages={threshold}&error=请至少勾选一条对话")
+        return _redirect(f"/qc/daily?start_date={start_s}&end_date={end_s}&min_messages={threshold}&page={page_s}&per_page={per_page_s}&error=请至少勾选一条对话")
 
     existing = set(
         session.exec(
@@ -4163,7 +4198,7 @@ async def qc_daily_batch_analyze(
     if created:
         session.commit()
 
-    return _redirect(f"/qc/daily?start_date={start_s}&end_date={end_s}&min_messages={threshold}&ok=已入队{created}条质检任务")
+    return _redirect(f"/qc/daily?start_date={start_s}&end_date={end_s}&min_messages={threshold}&page={page_s}&per_page={per_page_s}&ok=已入队{created}条质检任务")
 
 
 @app.get("/tasks", response_class=HTMLResponse)
