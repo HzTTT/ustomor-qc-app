@@ -53,6 +53,10 @@ python worker.py
 python cron_runner.py
 ```
 
+### 测试/运行规则（重要）
+- **所有测试与运行必须在 Docker 容器内执行**（例如：`docker compose exec app ...`）。
+- 避免在宿主机直接运行 `python`/`pytest`/`uvicorn`。
+
 ### 数据库操作
 ```bash
 # 首次启动（自动导入备份）

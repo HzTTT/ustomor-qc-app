@@ -4107,6 +4107,7 @@ def qc_daily_page(
 
     # 计算总数和分页
     total_count = len(convos)
+    total_message_count = sum(rounds_by_conv.get(c.id, 0) for c in convos if c.id)
     total_pages = (total_count + items_per_page - 1) // items_per_page if total_count > 0 else 1
     current_page = min(current_page, total_pages)
 
@@ -4115,6 +4116,7 @@ def qc_daily_page(
     end_idx = start_idx + items_per_page
     convos_page = convos[start_idx:end_idx]
     conv_ids_page = [int(c.id) for c in convos_page if c.id]
+    page_message_count = sum(rounds_by_conv.get(c.id, 0) for c in convos_page if c.id)
 
     pending = set()
     if conv_ids_page:
@@ -4141,6 +4143,8 @@ def qc_daily_page(
         current_page=current_page,
         total_pages=total_pages,
         total_count=total_count,
+        total_message_count=total_message_count,
+        page_message_count=page_message_count,
         per_page=items_per_page,
         ok=request.query_params.get("ok"),
         error=request.query_params.get("error"),
@@ -4408,6 +4412,18 @@ def reports(
         except Exception:
             return None
 
+    def _week_bounds(d: datetime) -> tuple[datetime, datetime]:
+        week_start = d - timedelta(days=d.weekday())
+        week_end = week_start + timedelta(days=6)
+        return week_start, week_end
+
+    def _shift_year_safe(d: datetime, years: int) -> datetime:
+        try:
+            return d.replace(year=d.year + years)
+        except ValueError:
+            # Handle Feb 29 for non-leap years by falling back to Feb 28
+            return d.replace(year=d.year + years, day=28)
+    
     start_dt = _parse_date(start)
     end_dt = _parse_date(end)
     end_dt_excl = (end_dt + timedelta(days=1)) if end_dt else None
@@ -4603,6 +4619,17 @@ def tags_report_page(
     now = datetime.utcnow()
     today = datetime(now.year, now.month, now.day)
 
+    def _normalize_range(start_dt, end_dt):
+        if not start_dt and not end_dt:
+            return None, None
+        if start_dt and not end_dt:
+            end_dt = start_dt
+        if end_dt and not start_dt:
+            start_dt = end_dt
+        if start_dt and end_dt and start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
+        return start_dt, end_dt
+
     # 计算时间范围
     if mode == "all":
         # 汇总：全部数据
@@ -4638,35 +4665,58 @@ def tags_report_page(
             yoy_end_excl = None
             yoy_label = ""
     elif mode == "last_week":
-        # 上周（周一到周日）
-        # 计算本周一
-        days_since_monday = today.weekday()  # 0=周一, 6=周日
-        this_monday = today - timedelta(days=days_since_monday)
-        # 上周一到上周日
-        last_monday = this_monday - timedelta(days=7)
-        last_sunday = this_monday - timedelta(days=1)
-        
-        start_dt = last_monday
-        end_dt = last_sunday
-        cur_start = start_dt
-        cur_end_excl = end_dt + timedelta(days=1)
-        cur_label = f"上周 ({start_dt.date().isoformat()} ~ {end_dt.date().isoformat()})"
-        
-        # 环比：上上周
-        prev_start = start_dt - timedelta(days=7)
-        prev_end_excl = start_dt
-        prev_label = f"上上周 ({prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()})"
-        
-        # 同比：去年上周
-        if yoy:
-            yoy_start = datetime(start_dt.year - 1, start_dt.month, start_dt.day)
-            yoy_end = datetime(end_dt.year - 1, end_dt.month, end_dt.day)
-            yoy_end_excl = yoy_end + timedelta(days=1)
-            yoy_label = f"去年同周 ({yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()})"
+        # 周：用用户选择的日期定位到当周；未提供时默认上周（周一到周日）
+        start_dt, end_dt = _normalize_range(start_dt, end_dt)
+        if start_dt or end_dt:
+            anchor = start_dt or end_dt
+            week_start, week_end = _week_bounds(anchor)
+            cur_start = week_start
+            cur_end_excl = week_end + timedelta(days=1)
+            cur_label = f"周 ({week_start.date().isoformat()} ~ {week_end.date().isoformat()})"
+
+            prev_start = week_start - timedelta(days=7)
+            prev_end_excl = week_start
+            prev_label = f"{prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()}"
+
+            if yoy:
+                yoy_start = _shift_year_safe(week_start, -1)
+                yoy_end = _shift_year_safe(week_end, -1)
+                yoy_end_excl = yoy_end + timedelta(days=1)
+                yoy_label = f"{yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()}"
+            else:
+                yoy_start = None
+                yoy_end_excl = None
+                yoy_label = ""
         else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
+            # 上周（周一到周日）
+            # 计算本周一
+            days_since_monday = today.weekday()  # 0=周一, 6=周日
+            this_monday = today - timedelta(days=days_since_monday)
+            # 上周一到上周日
+            last_monday = this_monday - timedelta(days=7)
+            last_sunday = this_monday - timedelta(days=1)
+            
+            start_dt = last_monday
+            end_dt = last_sunday
+            cur_start = start_dt
+            cur_end_excl = end_dt + timedelta(days=1)
+            cur_label = f"上周 ({start_dt.date().isoformat()} ~ {end_dt.date().isoformat()})"
+            
+            # 环比：上上周
+            prev_start = start_dt - timedelta(days=7)
+            prev_end_excl = start_dt
+            prev_label = f"上上周 ({prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()})"
+            
+            # 同比：去年上周
+            if yoy:
+                yoy_start = datetime(start_dt.year - 1, start_dt.month, start_dt.day)
+                yoy_end = datetime(end_dt.year - 1, end_dt.month, end_dt.day)
+                yoy_end_excl = yoy_end + timedelta(days=1)
+                yoy_label = f"去年同周 ({yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()})"
+            else:
+                yoy_start = None
+                yoy_end_excl = None
+                yoy_label = ""
     elif mode == "last_month":
         # 上月（1号到最后一天）
         # 本月1号
@@ -4798,12 +4848,7 @@ def tags_report_page(
         if not start_dt and not end_dt:
             end_dt = today - timedelta(days=1)  # 默认到昨天
             start_dt = end_dt - timedelta(days=6)  # 最近7天
-        if start_dt and not end_dt:
-            end_dt = start_dt
-        if end_dt and not start_dt:
-            start_dt = end_dt
-        if start_dt and end_dt and start_dt > end_dt:
-            start_dt, end_dt = end_dt, start_dt
+        start_dt, end_dt = _normalize_range(start_dt, end_dt)
 
         cur_start = start_dt
         cur_end_excl = (end_dt + timedelta(days=1)) if end_dt else None

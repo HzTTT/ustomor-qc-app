@@ -123,7 +123,8 @@ def get_conversations_eligible_for_qc(
     if not unanalyzed_convs:
         return []
     
-    conv_ids = [row[0] for row in unanalyzed_convs]
+    # SQLModel may return scalars for single-column selects.
+    conv_ids = [int(row) for row in unanalyzed_convs]
     
     # 2. 统计每个对话的消息数
     msg_counts = session.exec(
@@ -161,7 +162,8 @@ def get_conversations_eligible_for_qc(
             .distinct()
         ).all()
         
-        agent_accounts_list = [str(row[0]).strip() for row in agent_accounts if row and str(row[0]).strip()]
+        # SQLModel returns scalars for single-column selects.
+        agent_accounts_list = [str(acc).strip() for acc in agent_accounts if acc and str(acc).strip()]
         
         # 如果没有客服消息，跳过（可能是纯买家咨询）
         if not agent_accounts_list:
@@ -172,7 +174,7 @@ def get_conversations_eligible_for_qc(
         for acc in agent_accounts_list:
             binding = session.exec(
                 select(AgentBinding).where(
-                    AgentBinding.platform == conv.platform.lower(),
+                    AgentBinding.platform == (conv.platform or "").lower(),
                     AgentBinding.agent_account == acc,
                 )
             ).first()

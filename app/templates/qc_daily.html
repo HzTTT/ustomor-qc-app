@@ -5,7 +5,7 @@
     <h1 class="text-2xl font-semibold">AI质检</h1>
     <div class="text-sm text-slate-500 mt-1">
       筛选时间范围内、消息数≥{{ threshold_messages }} 的对话，默认已帮你圈选可质检的对话。
-      <span class="font-medium text-slate-700">共 {{ total_count }} 条</span>
+      <span class="font-medium text-slate-700">共 {{ total_count }} 条对话 · {{ total_message_count }} 条消息</span>
     </div>
   </div>
   <div class="flex items-center gap-2">
@@ -112,11 +112,10 @@
     </table>
   </div>
 
-  {% if total_pages > 1 %}
   <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
     <div class="text-sm text-slate-500">
-      第 {{ current_page }} / {{ total_pages }} 页，共 {{ total_count }} 条记录
-      （当前页显示 {{ convos|length }} 条）
+      第 {{ current_page }} / {{ total_pages }} 页，共 {{ total_count }} 条对话 · {{ total_message_count }} 条消息
+      （当前页 {{ convos|length }} 条对话 · {{ page_message_count }} 条消息）
     </div>
     <div class="flex items-center gap-2">
       {% if current_page > 1 %}
@@ -152,7 +151,6 @@
       {% endif %}
     </div>
   </div>
-  {% endif %}
 </form>
 
 <script>
