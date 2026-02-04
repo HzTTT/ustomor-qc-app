@@ -51,12 +51,13 @@
     </thead>
     <tbody>
       {% for u in users %}
+        {% set cur_role = u.role.value if u.role.value is defined else u.role %}
         <tr class="border-t">
           <td class="px-4 py-3 text-slate-600">{{ u.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
           <td class="px-4 py-3">{{ u.username }}</td>
           <td class="px-4 py-3">{{ u.name }}</td>
           <td class="px-4 py-3">{{ u.email }}</td>
-          <td class="px-4 py-3">{{ u.role }}</td>
+          <td class="px-4 py-3">{{ cur_role }}</td>
           <td class="px-4 py-3 text-slate-700">{{ convo_cnt_by_user.get(u.id, 0) }}</td>
           <td class="px-4 py-3 text-slate-700">{{ sent_msg_cnt_by_user.get(u.id, 0) }}</td>
           <td class="px-4 py-3">
@@ -76,10 +77,19 @@
                     <input name="username" value="{{ u.username }}" placeholder="用户名" class="px-3 py-2 rounded-xl border" required />
                     <input name="name" value="{{ u.name }}" placeholder="姓名" class="px-3 py-2 rounded-xl border" required />
                     <input name="email" value="{{ u.email }}" placeholder="邮箱" class="px-3 py-2 rounded-xl border" required />
+                    <select name="role" class="px-3 py-2 rounded-xl border">
+                      <option value="agent" {% if cur_role == "agent" %}selected{% endif %}>agent(客服)</option>
+                      <option value="supervisor" {% if cur_role == "supervisor" %}selected{% endif %}>supervisor(主管)</option>
+                      <option value="admin" {% if cur_role == "admin" %}selected{% endif %}>admin(管理员)</option>
+                    </select>
                     <input name="password" placeholder="新密码（不改就留空）" class="px-3 py-2 rounded-xl border" />
                     <div class="flex items-center gap-2">
                       <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-xs">保存</button>
-                      <span class="text-xs text-slate-500">保存后立即生效</span>
+                      {% if u.id == user.id %}
+                        <span class="text-xs text-slate-500">修改自己的角色为非 admin 会立即失去账号管理权限</span>
+                      {% else %}
+                        <span class="text-xs text-slate-500">保存后立即生效</span>
+                      {% endif %}
                     </div>
                   </form>
                 </div>

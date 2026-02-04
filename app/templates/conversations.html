@@ -176,6 +176,104 @@
   .table-refined tbody tr:hover {
     background: #f8fafc;
   }
+
+  /* === Tag chips + AI reason popover === */
+  .tag-chip {
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+    transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  }
+
+  .tag-chip[data-ai-reason] {
+    cursor: help;
+  }
+
+  .tag-chip[data-ai-reason]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+  }
+
+  .tag-reason-popover {
+    position: fixed;
+    z-index: 1000;
+    width: 360px;
+    max-width: min(360px, calc(100vw - 24px));
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+    transition: opacity 130ms ease, transform 130ms ease;
+    pointer-events: auto;
+  }
+
+  .tag-reason-popover.is-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  .tag-reason-popover-inner {
+    border-radius: 18px;
+    padding: 14px 14px 12px;
+    max-height: min(360px, calc(100vh - 24px));
+    overflow: auto;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(2, 6, 23, 0.92) 100%);
+    box-shadow: 0 30px 80px rgba(2, 6, 23, 0.38);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+
+  .tag-reason-popover-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .tag-reason-popover-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.16);
+    border: 1px solid rgba(56, 189, 248, 0.32);
+    color: #7dd3fc;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+
+  .tag-reason-popover-title-text {
+    color: #f8fafc;
+    font-size: 0.92rem;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+
+  .tag-reason-popover-body {
+    color: #cbd5e1;
+    font-size: 0.86rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+  }
+
+  .tag-reason-popover-arrow {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: rgba(10, 18, 36, 0.94);
+    transform: rotate(45deg);
+    filter: drop-shadow(0 12px 28px rgba(2, 6, 23, 0.35));
+  }
+
+  .tag-reason-popover[data-placement="top"] .tag-reason-popover-arrow {
+    bottom: -6px;
+  }
+
+  .tag-reason-popover[data-placement="bottom"] .tag-reason-popover-arrow {
+    top: -6px;
+  }
 </style>
 
 <div class="conv-page space-y-5">
@@ -463,7 +561,8 @@
   </div>
 
   <div class="table-card">
-    <table class="table-refined w-full text-sm">
+    <div class="overflow-x-auto">
+    <table class="table-refined w-full text-sm min-w-[980px]">
       <thead>
         <tr>
           <th class="text-left px-4 py-3">CID 编号</th>
@@ -473,7 +572,7 @@
           <th class="text-left px-4 py-3">是否已质检</th>
           <th class="text-left px-4 py-3">满意度变化</th>
           <th class="text-left px-4 py-3">全部具体标签</th>
-          <th class="text-left px-4 py-3">操作</th>
+          <th class="text-left px-4 py-3 whitespace-nowrap">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -488,12 +587,12 @@
             <td class="px-4 py-3">{{ display_agent_label_by_conv.get(c.id, "-") }}</td>
             <td class="px-4 py-3">
               {% if a %}
-                <span class="text-xs px-2 py-1 rounded-full bg-green-50 border text-green-700">已质检</span>
+                <span class="inline-flex items-center justify-center text-xs px-2 py-1 rounded-full bg-green-50 border text-green-700 whitespace-nowrap">已质检</span>
               {% else %}
-                <span class="text-xs px-2 py-1 rounded-full bg-gray-50 border text-gray-600">未质检</span>
+                <span class="inline-flex items-center justify-center text-xs px-2 py-1 rounded-full bg-gray-50 border text-gray-600 whitespace-nowrap">未质检</span>
               {% endif %}
             </td>
-            <td class="px-4 py-3 text-slate-700">
+            <td class="px-4 py-3 text-slate-700 whitespace-nowrap">
               {% if a and a.satisfaction_change %}
                 {{ a.satisfaction_change }}
               {% else %}
@@ -502,17 +601,26 @@
             </td>
             <td class="px-4 py-3 text-slate-700">
               {% if conv_tags %}
-                <div class="flex flex-wrap gap-1">
+                <div class="flex flex-wrap gap-1.5">
                   {% for tag in conv_tags %}
-                    <span class="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700">{{ tag }}</span>
+                    {% set tag_name = tag.name if tag.name is defined else tag %}
+                    {% set tag_reason = tag.ai_reason if tag.ai_reason is defined else "" %}
+                    <span
+                      class="tag-chip text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      {% if tag_reason %}
+                        data-ai-reason='{{ tag_reason|tojson }}'
+                        tabindex="0"
+                        aria-label="AI 判定原因"
+                      {% endif %}
+                    >{{ tag_name }}</span>
                   {% endfor %}
                 </div>
               {% else %}
                 -
               {% endif %}
             </td>
-            <td class="px-4 py-3">
-              <a class="px-3 py-1 rounded-xl border bg-white text-xs" href="/conversations/{{ c.id }}">查看</a>
+            <td class="px-4 py-3 whitespace-nowrap">
+              <a class="inline-flex items-center justify-center px-3 py-1 rounded-xl border bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap" href="/conversations/{{ c.id }}">查看</a>
             </td>
           </tr>
         {% endfor %}
@@ -523,28 +631,41 @@
         {% endif %}
       </tbody>
     </table>
+    </div>
   </div>
 
   {% if total_pages > 1 %}
-    <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-4 text-sm text-slate-600">
       <div>
         共 {{ total }} 条 · 每页 {{ page_size }} 条 · 第 {{ page }} / {{ total_pages }} 页
       </div>
       <div class="flex items-center gap-2">
         {% if page > 1 %}
-          <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">上一页</a>
+          <a class="inline-flex items-center justify-center px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50 whitespace-nowrap" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">上一页</a>
         {% else %}
-          <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">上一页</span>
+          <span class="inline-flex items-center justify-center px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400 whitespace-nowrap">上一页</span>
         {% endif %}
         {% if page < total_pages %}
-          <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">下一页</a>
+          <a class="inline-flex items-center justify-center px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50 whitespace-nowrap" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">下一页</a>
         {% else %}
-          <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">下一页</span>
+          <span class="inline-flex items-center justify-center px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400 whitespace-nowrap">下一页</span>
         {% endif %}
       </div>
     </div>
   {% endif %}
 </div>
+
+<div id="tag-reason-popover" class="tag-reason-popover hidden" data-placement="top" data-pinned="0" aria-hidden="true">
+  <div class="tag-reason-popover-inner">
+    <div class="tag-reason-popover-title">
+      <div class="tag-reason-popover-badge">AI</div>
+      <div class="tag-reason-popover-title-text">判定原因</div>
+    </div>
+    <div id="tag-reason-popover-text" class="tag-reason-popover-body"></div>
+  </div>
+  <div class="tag-reason-popover-arrow" aria-hidden="true"></div>
+</div>
+
 <script>
   (function () {
     var USER_ID = {{ user.id }};
@@ -1084,6 +1205,201 @@
 
     saveCurrentFiltersFromUrl();
     updateAllDropdownCounts();
+
+    // === 标签：长按/悬浮显示 AI 判定原因（仅 AI reason） ===
+    (function initTagReasonPopover() {
+      var popover = document.getElementById("tag-reason-popover");
+      var popText = document.getElementById("tag-reason-popover-text");
+      if (!popover || !popText) return;
+
+      try {
+        // Portal to body to avoid being clipped by overflow containers.
+        document.body.appendChild(popover);
+      } catch (e) {}
+
+      var hideTimer = null;
+      var pinnedByEl = null;
+
+      function clamp(n, min, max) {
+        return Math.max(min, Math.min(max, n));
+      }
+
+      function isPinned() {
+        return popover.getAttribute("data-pinned") === "1";
+      }
+
+      function parseReason(raw) {
+        if (!raw) return "";
+        try {
+          var parsed = JSON.parse(raw);
+          if (typeof parsed === "string") return parsed.trim();
+        } catch (e) {}
+        return String(raw || "").trim();
+      }
+
+      function setHidden(hidden) {
+        if (hidden) {
+          popover.classList.remove("is-visible");
+          popover.classList.add("hidden");
+          popover.setAttribute("aria-hidden", "true");
+          popover.setAttribute("data-pinned", "0");
+          return;
+        }
+        popover.classList.remove("hidden");
+        popover.setAttribute("aria-hidden", "false");
+      }
+
+      function hide(force) {
+        if (!force && isPinned()) return;
+        pinnedByEl = null;
+        popover.setAttribute("data-pinned", "0");
+        popover.classList.remove("is-visible");
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(function () {
+          setHidden(true);
+        }, 140);
+      }
+
+      function show(anchorEl, reason, pin) {
+        reason = String(reason || "").trim();
+        if (!anchorEl || !reason) return;
+
+        clearTimeout(hideTimer);
+        setHidden(false);
+        popover.classList.remove("is-visible");
+        popText.textContent = reason;
+
+        // Measure
+        popover.style.left = "-9999px";
+        popover.style.top = "-9999px";
+        popover.setAttribute("data-placement", "top");
+        var anchorRect = anchorEl.getBoundingClientRect();
+        var popRect = popover.getBoundingClientRect();
+
+        var gap = 10;
+        var placement = "top";
+        var top = anchorRect.top - popRect.height - gap;
+        if (top < 8) {
+          placement = "bottom";
+          top = anchorRect.bottom + gap;
+        }
+
+        // If bottom still overflow, fallback to top.
+        if (placement === "bottom" && top + popRect.height > window.innerHeight - 8) {
+          placement = "top";
+          top = anchorRect.top - popRect.height - gap;
+        }
+
+        // Clamp inside viewport
+        top = clamp(top, 8, window.innerHeight - popRect.height - 8);
+
+        var left = anchorRect.left + (anchorRect.width / 2) - (popRect.width / 2);
+        left = clamp(left, 8, window.innerWidth - popRect.width - 8);
+
+        popover.style.left = left + "px";
+        popover.style.top = top + "px";
+        popover.setAttribute("data-placement", placement);
+
+        // Arrow points to anchor center.
+        var arrow = popover.querySelector(".tag-reason-popover-arrow");
+        if (arrow) {
+          var anchorCenter = anchorRect.left + (anchorRect.width / 2);
+          var arrowLeft = clamp(anchorCenter - left - 6, 14, popRect.width - 14);
+          arrow.style.left = arrowLeft + "px";
+        }
+
+        popover.setAttribute("data-pinned", pin ? "1" : "0");
+
+        requestAnimationFrame(function () {
+          popover.classList.add("is-visible");
+        });
+      }
+
+      var tagEls = document.querySelectorAll(".tag-chip[data-ai-reason]");
+      tagEls.forEach(function (el) {
+        var raw = el.getAttribute("data-ai-reason") || "";
+        var reason = parseReason(raw);
+        if (!reason) return;
+
+        el.addEventListener("contextmenu", function (ev) {
+          ev.preventDefault();
+        });
+
+        el.addEventListener("mouseenter", function () {
+          if (isPinned()) return;
+          show(el, reason, false);
+        });
+        el.addEventListener("mouseleave", function () {
+          hide(false);
+        });
+        el.addEventListener("focus", function () {
+          if (isPinned()) return;
+          show(el, reason, false);
+        });
+        el.addEventListener("blur", function () {
+          hide(false);
+        });
+
+        var pressTimer = null;
+        var startX = 0;
+        var startY = 0;
+
+        function cancelPress() {
+          if (pressTimer) {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+          }
+        }
+
+        el.addEventListener("pointerdown", function (ev) {
+          if (ev.pointerType !== "touch" && ev.pointerType !== "pen") return;
+
+          // Toggle when pinned on the same tag.
+          if (isPinned() && pinnedByEl === el) {
+            hide(true);
+            return;
+          }
+
+          pinnedByEl = null;
+          startX = ev.clientX;
+          startY = ev.clientY;
+          cancelPress();
+          pressTimer = setTimeout(function () {
+            pinnedByEl = el;
+            show(el, reason, true);
+          }, 450);
+        });
+
+        el.addEventListener("pointerup", cancelPress);
+        el.addEventListener("pointercancel", cancelPress);
+        el.addEventListener("pointermove", function (ev) {
+          if (!pressTimer) return;
+          var moved = Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY);
+          if (moved > 14) cancelPress();
+        });
+      });
+
+      document.addEventListener("pointerdown", function (ev) {
+        if (!isPinned()) return;
+        var t = ev.target;
+        if (t && t.closest) {
+          if (t.closest("#tag-reason-popover")) return;
+          if (t.closest(".tag-chip[data-ai-reason]")) return;
+        }
+        hide(true);
+      });
+
+      document.addEventListener("keydown", function (ev) {
+        if (ev.key === "Escape") hide(true);
+      });
+
+      window.addEventListener("resize", function () {
+        hide(true);
+      });
+      window.addEventListener("scroll", function () {
+        hide(true);
+      }, true);
+    })();
   })();
 </script>
 {% endblock %}

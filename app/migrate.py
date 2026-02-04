@@ -11,6 +11,7 @@ from db import engine
 MIGRATION_ID = "2026-01-30-ensure_schema-v7-qc"
 SETTINGS_COLUMNS_MIGRATION_ID = "2026-01-30-appconfig-settings-v2"
 REJECTED_TAG_RULES_MIGRATION_ID = "2026-02-03-rejected-tag-rules-v1"
+PRODUCT_QUALITY_SCOPE_MIGRATION_ID = "2026-02-04-product-quality-scope-v1"
 BACKFILL_ID = "2026-01-27-backfill-multi-agent-v1"
 USERTHREAD_BACKFILL_ID = "2026-01-28-backfill-user-thread-v1"
 
@@ -350,6 +351,53 @@ def ensure_schema() -> None:
     _apply_rejected_tag_rules(engine)
     # Separate migration for new AppConfig columns (runs even if v6 was already applied).
     _apply_appconfig_settings_columns(engine)
+    _apply_product_quality_scope(engine)
+
+
+def _apply_product_quality_scope(eng) -> None:
+    """Force product-quality complaint tags to only hit on post-delivery feedback.
+
+    用户诉求：避免售前“会不会起球/会不会掉色”等咨询也命中“产品质量投诉”二级标签。
+    通过在该一级分类下的所有二级标签判定标准前追加明确的“命中判定范围”约束实现。
+    """
+    prefix = "命中判定范围：用户收到货后反馈（含试穿/使用/洗后）；售前/未收货仅咨询不命中。命中标准："
+    with eng.begin() as conn:
+        _ensure_migrations_table(conn)
+        if _already_applied(conn, PRODUCT_QUALITY_SCOPE_MIGRATION_ID):
+            return
+
+        # Idempotent: only modify "产品质量投诉" category.
+        # - If already correct, keep.
+        # - If has an old "命中判定范围：...命中标准：" header, replace the header.
+        # - Else, just prepend the header.
+        conn.execute(
+            text(
+                """
+                WITH cat AS (
+                  SELECT id
+                  FROM tagcategory
+                  WHERE trim(name) = '产品质量投诉'
+                  LIMIT 1
+                )
+                UPDATE tagdefinition t
+                SET
+                  standard = CASE
+                    WHEN coalesce(t.standard, '') LIKE :ok_prefix THEN t.standard
+                    WHEN coalesce(t.standard, '') LIKE '命中判定范围：%' AND position('命中标准：' in coalesce(t.standard, '')) > 0 THEN
+                      :prefix || substring(
+                        coalesce(t.standard, ''),
+                        position('命中标准：' in coalesce(t.standard, '')) + char_length('命中标准：')
+                      )
+                    ELSE :prefix || coalesce(t.standard, '')
+                  END,
+                  updated_at = NOW()
+                WHERE t.category_id = (SELECT id FROM cat);
+                """
+            ),
+            {"prefix": prefix, "ok_prefix": "命中判定范围：用户收到货后反馈%"},
+        )
+
+        _mark_applied(conn, PRODUCT_QUALITY_SCOPE_MIGRATION_ID)
 
 
 def _apply_rejected_tag_rules(eng) -> None:

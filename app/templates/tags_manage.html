@@ -204,6 +204,14 @@
                                         <input type="checkbox" name="is_active" value="1" {{ 'checked' if t.is_active else '' }} />
                                       </label>
                                     </div>
+                                    <div>
+                                      <label class="text-sm text-slate-600">所属分类</label>
+                                      <select name="category_id" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white text-sm">
+                                        {% for cat in categories %}
+                                          <option value="{{ cat.id }}" {{ 'selected' if cat.id == t.category_id else '' }}>{{ cat.name }}{{ '（停用）' if not cat.is_active else '' }}</option>
+                                        {% endfor %}
+                                      </select>
+                                    </div>
                                     <input name="standard" value="{{ t.standard or '' }}" class="w-full px-3 py-2 rounded-lg border" placeholder="判定标准（给AI）" />
                                     <textarea name="description" rows="2" class="w-full px-3 py-2 rounded-lg border" placeholder="备注/例子（可选）">{{ t.description or '' }}</textarea>
                                     <button class="w-full px-3 py-2 rounded-lg bg-white border hover:bg-slate-50">保存</button>
@@ -296,6 +304,14 @@
                                     <span class="text-slate-600">启用</span>
                                     <input type="checkbox" name="is_active" value="1" {{ 'checked' if t.is_active else '' }} />
                                   </label>
+                                </div>
+                                <div>
+                                  <label class="text-sm text-slate-600">所属分类</label>
+                                  <select name="category_id" class="mt-1 w-full px-3 py-2 rounded-lg border bg-white text-sm">
+                                    {% for cat in categories %}
+                                      <option value="{{ cat.id }}" {{ 'selected' if cat.id == t.category_id else '' }}>{{ cat.name }}{{ '（停用）' if not cat.is_active else '' }}</option>
+                                    {% endfor %}
+                                  </select>
                                 </div>
                                 <input name="standard" value="{{ t.standard or '' }}" class="w-full px-3 py-2 rounded-lg border" placeholder="判定标准（给AI）" />
                                 <textarea name="description" rows="2" class="w-full px-3 py-2 rounded-lg border" placeholder="备注/例子（可选）">{{ t.description or '' }}</textarea>

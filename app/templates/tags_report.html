@@ -22,12 +22,16 @@
         <div class="text-xs text-slate-500 mt-1">拖拽调整层级与顺序。标签分类/标签会自动跟随。</div>
       </div>
     </div>
-    <div class="mt-3 flex flex-wrap gap-2 items-center">
-      <button id="expand-all" type="button" class="px-3 py-1.5 rounded-lg border text-xs">展开全部</button>
-      <button id="collapse-all" type="button" class="px-3 py-1.5 rounded-lg border text-xs">折叠全部</button>
-      <select id="level-select" class="border rounded-lg px-2 py-1 text-xs w-full"></select>
-      <button id="expand-level" type="button" class="px-3 py-1.5 rounded-lg border text-xs">展开该层</button>
-      <button id="collapse-level" type="button" class="px-3 py-1.5 rounded-lg border text-xs">折叠该层</button>
+    <div class="mt-3 p-2 rounded-xl border bg-slate-50 space-y-2">
+      <div class="grid grid-cols-2 gap-2">
+        <button id="expand-all" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">展开全部</button>
+        <button id="collapse-all" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">折叠全部</button>
+      </div>
+      <select id="level-select" class="border rounded-xl px-3 py-2 text-xs w-full bg-white"></select>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="expand-level" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">展开该层</button>
+        <button id="collapse-level" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">折叠该层</button>
+      </div>
     </div>
     <div class="mt-4">
       <div class="text-xs text-slate-500 mb-1">选中行标签</div>
@@ -139,13 +143,18 @@
           <thead>
             <tr class="text-left border-b">
               <th class="py-2 pr-4">维度</th>
-              <th class="py-2 pr-4">标签命中数</th>
+              <th class="py-2 pr-4" title="质检对话数（去重）：在当前行维度范围内的去重对话数（按对话ID去重；每个对话只取最新一条AI质检分析）。标签/标签分类行则表示命中该标签范围内的去重对话数。">质检对话数</th>
+              <th class="py-2 pr-4 col-mom">对话数环比</th>
+              <th class="py-2 pr-4 col-yoy">对话数同比</th>
+              <th class="py-2 pr-4" title="对话数占比 = 质检对话数（去重） / 总质检对话数（在当前筛选条件下，全部质检过的去重对话总数；汇总=100%）。">对话数占比</th>
+              <th class="py-2 pr-4 col-mom">对话占比环比</th>
+              <th class="py-2 pr-4 col-yoy">对话占比同比</th>
+              <th class="py-2 pr-4" title="标签命中数：按对话ID去重（每个对话只取最新一条AI质检分析）；同一对话命中多个标签会分别计入多个标签，因此上层汇总可能超过总对话数。">标签命中数</th>
               <th class="py-2 pr-4 col-mom">数量环比</th>
               <th class="py-2 pr-4 col-yoy">数量同比</th>
-              <th class="py-2 pr-4">标签占比</th>
-              <th class="py-2 pr-4 col-mom">占比环比</th>
-              <th class="py-2 pr-4 col-yoy">占比同比</th>
-              <th class="py-2 pr-4">质检对话数</th>
+              <th class="py-2 pr-4" title="标签占比 = 标签命中数 / 总质检对话数（在当前行维度+筛选条件下的总对话数）。此口径保持不变。">标签占比</th>
+              <th class="py-2 pr-4 col-mom">标签占比环比</th>
+              <th class="py-2 pr-4 col-yoy">标签占比同比</th>
             </tr>
           </thead>
           <tbody id="pivot-body"></tbody>
@@ -739,6 +748,24 @@
     return idx;
   }
 
+  function buildTaggedTotalIndex(taggedTotals) {
+    const idx = new Map();
+    taggedTotals.forEach(t => {
+      const key = `${t.platform || ""}||${t.agent_user_id || 0}||${t.reception_scenario || ""}||${t.satisfaction_change || ""}`;
+      idx.set(key, t);
+    });
+    return idx;
+  }
+
+  function buildTaggedCategoryIndex(taggedCategoryTotals) {
+    const idx = new Map();
+    taggedCategoryTotals.forEach(t => {
+      const key = `${t.category_id || 0}||${t.platform || ""}||${t.agent_user_id || 0}||${t.reception_scenario || ""}||${t.satisfaction_change || ""}`;
+      idx.set(key, t);
+    });
+    return idx;
+  }
+
   function getTotalsForDims(totalIndex, dims) {
     const key = JSON.stringify({
       platform: dims.platform || "",
@@ -770,6 +797,74 @@
 
     const result = { current: cur, prev, yoy };
     getTotalsForDims.cache.set(key, result);
+    return result;
+  }
+
+  function getTaggedTotalsForDims(taggedIndex, dims) {
+    const key = JSON.stringify({
+      platform: dims.platform || "",
+      agent: dims.agent_user_id || 0,
+      scenario: dims.reception_scenario || "",
+      satisfaction: dims.satisfaction_change || "",
+    });
+    if (!getTaggedTotalsForDims.cache) {
+      getTaggedTotalsForDims.cache = new Map();
+    }
+    if (getTaggedTotalsForDims.cache.has(key)) {
+      return getTaggedTotalsForDims.cache.get(key);
+    }
+
+    let cur = 0;
+    let prev = 0;
+    let yoy = 0;
+    for (const [k, v] of taggedIndex.entries()) {
+      const [plat, agent, scenario, satisfaction] = k.split("||");
+      if (dims.platform && plat !== String(dims.platform)) continue;
+      if (dims.agent_user_id && String(agent) !== String(dims.agent_user_id)) continue;
+      if (dims.reception_scenario && scenario !== String(dims.reception_scenario)) continue;
+      if (dims.satisfaction_change && satisfaction !== String(dims.satisfaction_change)) continue;
+      cur += v.current || 0;
+      prev += v.prev || 0;
+      yoy += v.yoy || 0;
+    }
+
+    const result = { current: cur, prev, yoy };
+    getTaggedTotalsForDims.cache.set(key, result);
+    return result;
+  }
+
+  function getTaggedCategoryTotalsForDims(taggedCategoryIndex, dims) {
+    const key = JSON.stringify({
+      category_id: dims.category_id || 0,
+      platform: dims.platform || "",
+      agent: dims.agent_user_id || 0,
+      scenario: dims.reception_scenario || "",
+      satisfaction: dims.satisfaction_change || "",
+    });
+    if (!getTaggedCategoryTotalsForDims.cache) {
+      getTaggedCategoryTotalsForDims.cache = new Map();
+    }
+    if (getTaggedCategoryTotalsForDims.cache.has(key)) {
+      return getTaggedCategoryTotalsForDims.cache.get(key);
+    }
+
+    let cur = 0;
+    let prev = 0;
+    let yoy = 0;
+    for (const [k, v] of taggedCategoryIndex.entries()) {
+      const [catId, plat, agent, scenario, satisfaction] = k.split("||");
+      if (String(catId) !== String(dims.category_id || 0)) continue;
+      if (dims.platform && plat !== String(dims.platform)) continue;
+      if (dims.agent_user_id && String(agent) !== String(dims.agent_user_id)) continue;
+      if (dims.reception_scenario && scenario !== String(dims.reception_scenario)) continue;
+      if (dims.satisfaction_change && satisfaction !== String(dims.satisfaction_change)) continue;
+      cur += v.current || 0;
+      prev += v.prev || 0;
+      yoy += v.yoy || 0;
+    }
+
+    const result = { current: cur, prev, yoy };
+    getTaggedCategoryTotalsForDims.cache.set(key, result);
     return result;
   }
 
@@ -895,23 +990,50 @@
     const tbody = document.getElementById("pivot-body");
     tbody.innerHTML = "";
     document.getElementById("pivot-loading").classList.add("hidden");
-    if (!pivotData || !Array.isArray(pivotData.tag_hits) || pivotData.tag_hits.length === 0) {
+    const hasTagHits = pivotData && Array.isArray(pivotData.tag_hits) && pivotData.tag_hits.length > 0;
+    const hasTotals = pivotData && Array.isArray(pivotData.totals) && pivotData.totals.length > 0;
+    if (!pivotData || (!hasTagHits && !hasTotals)) {
       document.getElementById("pivot-empty").classList.remove("hidden");
       return;
     }
 
     getTotalsForDims.cache = new Map();
+    getTaggedCategoryTotalsForDims.cache = new Map();
     const totalIndex = buildTotalIndex(pivotData.totals || []);
-    const root = buildTree(pivotData.tag_hits, getEffectiveRowFields());
+    const taggedCategoryIndex = buildTaggedCategoryIndex(pivotData.tagged_category_totals || []);
+    const root = buildTree(pivotData.tag_hits || [], getEffectiveRowFields());
 
     const rows = [];
     flattenTree(root, rows);
+    const qcGrandTotals = getTotalsForDims(totalIndex, {});
 
     rows.forEach(r => {
       const totals = getTotalsForDims(totalIndex, r.dims || {});
       const ratioCur = totals.current > 0 ? (r.metrics.current / totals.current) * 100 : 0;
       const ratioPrev = totals.prev > 0 ? (r.metrics.prev / totals.prev) * 100 : 0;
       const ratioYoy = totals.yoy > 0 ? (r.metrics.yoy / totals.yoy) * 100 : 0;
+
+      let qcCur = 0;
+      let qcPrev = 0;
+      let qcYoy = 0;
+      if (r.field === "tag") {
+        qcCur = r.metrics.current || 0;
+        qcPrev = r.metrics.prev || 0;
+        qcYoy = r.metrics.yoy || 0;
+      } else if (r.field === "tag_category") {
+        const x = getTaggedCategoryTotalsForDims(taggedCategoryIndex, r.dims || {});
+        qcCur = x.current || 0;
+        qcPrev = x.prev || 0;
+        qcYoy = x.yoy || 0;
+      } else {
+        const x = getTotalsForDims(totalIndex, r.dims || {});
+        qcCur = x.current || 0;
+        qcPrev = x.prev || 0;
+        qcYoy = x.yoy || 0;
+      }
+      const qcShareCur = qcGrandTotals.current > 0 ? (qcCur / qcGrandTotals.current) * 100 : null;
+      const qcSharePrev = qcGrandTotals.prev > 0 ? (qcPrev / qcGrandTotals.prev) * 100 : null;
+      const qcShareYoy = qcGrandTotals.yoy > 0 ? (qcYoy / qcGrandTotals.yoy) * 100 : null;
 
       const tr = document.createElement("tr");
       tr.className = `border-b ${r.is_header ? "bg-slate-50 font-medium" : ""}`;
@@ -978,6 +1100,36 @@
         nameTd.appendChild(inner);
       }
 
+      const qcTd = document.createElement("td");
+      qcTd.className = "py-2 pr-4";
+      qcTd.textContent = qcCur;
+
+      const qcMomTd = document.createElement("td");
+      qcMomTd.className = "py-2 pr-4 col-mom";
+      qcMomTd.textContent = pivotData.period && pivotData.period.prev_label ? formatDelta(qcCur, qcPrev) : "—";
+
+      const qcYoyTd = document.createElement("td");
+      qcYoyTd.className = "py-2 pr-4 col-yoy";
+      qcYoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatDelta(qcCur, qcYoy) : "—";
+
+      const qcShareTd = document.createElement("td");
+      qcShareTd.className = "py-2 pr-4";
+      qcShareTd.textContent = formatRatio(qcShareCur);
+
+      const qcShareMomTd = document.createElement("td");
+      qcShareMomTd.className = "py-2 pr-4 col-mom";
+      qcShareMomTd.textContent =
+        pivotData.period && pivotData.period.prev_label && qcShareCur !== null && qcSharePrev !== null
+          ? formatRatioDelta(qcShareCur, qcSharePrev)
+          : "—";
+
+      const qcShareYoyTd = document.createElement("td");
+      qcShareYoyTd.className = "py-2 pr-4 col-yoy";
+      qcShareYoyTd.textContent =
+        pivotData.period && pivotData.period.yoy_label && qcShareCur !== null && qcShareYoy !== null
+          ? formatRatioDelta(qcShareCur, qcShareYoy)
+          : "—";
+
       const countTd = document.createElement("td");
       countTd.className = "py-2 pr-4";
       const canClick = r.tag_id && r.metrics.current > 0;
@@ -1017,18 +1169,19 @@
       ratioYoyTd.className = "py-2 pr-4 col-yoy";
       ratioYoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatRatioDelta(ratioCur, ratioYoy) : "—";
 
-      const totalTd = document.createElement("td");
-      totalTd.className = "py-2 pr-4";
-      totalTd.textContent = totals.current;
-
       tr.appendChild(nameTd);
+      tr.appendChild(qcTd);
+      tr.appendChild(qcMomTd);
+      tr.appendChild(qcYoyTd);
+      tr.appendChild(qcShareTd);
+      tr.appendChild(qcShareMomTd);
+      tr.appendChild(qcShareYoyTd);
       tr.appendChild(countTd);
       tr.appendChild(momTd);
       tr.appendChild(yoyTd);
       tr.appendChild(ratioTd);
       tr.appendChild(ratioMomTd);
       tr.appendChild(ratioYoyTd);
-      tr.appendChild(totalTd);
 
       tbody.appendChild(tr);
     });

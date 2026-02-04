@@ -67,6 +67,8 @@ from tag_reject import normalize_key
 from ai_client import chat_completion, AIError, list_model_ids_sync, get_ai_settings
 from notify import get_feishu_webhook_url, send_feishu_webhook
 from daily_summary import DEFAULT_DAILY_SUMMARY_PROMPT, build_daily_input, generate_daily_summary, enqueue_daily_job, get_latest_daily_job
+from tools.user_admin import validate_role_change
+from tools.tag_management import update_tag_definition, normalize_standard_for_category
 
 
 app = FastAPI(title="客服质检与培训(MVP)")
@@ -1567,6 +1569,7 @@ def tags_tag_create(
     c = session.get(TagCategory, category_id)
     if not c:
         return _redirect(_tags_manage_url(cat=category_id, view=ui_view, error="所属分类不存在"))
+    standard = normalize_standard_for_category(session, int(category_id), standard)
     existing = session.exec(
         select(TagDefinition).where(TagDefinition.category_id == category_id, TagDefinition.name == name)
     ).first()
@@ -1596,6 +1599,7 @@ def tags_tag_update(
     user: User = Depends(require_role("admin", "supervisor")),
     session: Session = Depends(get_session),
     id: int = Form(...),
+    category_id: int | None = Form(None),
     name: str = Form(...),
     standard: str = Form(""),
     description: str = Form(""),
@@ -1603,15 +1607,19 @@ def tags_tag_update(
     ui_cat: int | None = Form(None),
     ui_view: str = Form(""),
 ):
-    t = session.get(TagDefinition, id)
-    if not t:
-        return _redirect(_tags_manage_url(cat=ui_cat, view=ui_view, error="标签不存在"))
-    t.name = name.strip() or t.name
-    t.standard = standard
-    t.description = description
-    t.is_active = bool(is_active)
-    t.updated_at = datetime.utcnow()
-    session.add(t)
+    try:
+        t = update_tag_definition(
+            session,
+            tag_id=int(id),
+            category_id=(int(category_id) if category_id is not None else None),
+            name=name,
+            standard=standard,
+            description=description,
+            is_active=bool(is_active),
+        )
+    except ValueError as e:
+        return _redirect(_tags_manage_url(cat=ui_cat, view=ui_view, error=str(e)))
+
     session.commit()
     return _redirect(_tags_manage_url(cat=int(t.category_id), view=ui_view, ok="已保存"))
 
@@ -1755,7 +1763,7 @@ def tags_template_download(
     ws.append(["CategoryName(一级分类)", "CategoryDescription(分类说明)", "TagName(二级标签)", "Standard(判定标准/给AI)", "Description(说明/给人看)"])
     ws.append(["客服接待", "", "未及时回复", "客服超过X分钟未回复/反复催促仍无反馈，则命中", "例：客户多次追问，客服无明确答复"])
     ws.append(["其他标签", "", "无法归类", "无法匹配现有分类且对客户造成影响时，可暂归为其他标签", ""])
-    ws.append(["产品质量投诉", "", "色差/做工问题", "客户明确反馈色差、起球、开线等质量问题，则命中", ""])
+    ws.append(["产品质量投诉", "", "色差/做工问题", "命中判定范围：用户收到货后反馈；售前/未收货仅咨询不命中。命中标准：客户收到货后明确反馈色差、起球、开线等质量问题，则命中。", ""])
 
     out = io.BytesIO()
     wb.save(out)
@@ -1873,11 +1881,12 @@ async def tags_import_xlsx(
         existing = session.exec(
             select(TagDefinition).where(TagDefinition.category_id == int(c.id), TagDefinition.name == tag_name)
         ).first()
+        normalized_std = normalize_standard_for_category(session, int(c.id), (r.get("standard") or ""))
         if existing:
             if duplicate in ("keep", "skip"):
                 skipped += 1
                 continue
-            existing.standard = (r.get("standard") or "")
+            existing.standard = normalized_std
             existing.description = (r.get("description") or "")
             existing.is_active = True
             existing.updated_at = datetime.utcnow()
@@ -1889,7 +1898,7 @@ async def tags_import_xlsx(
                 TagDefinition(
                     category_id=int(c.id),
                     name=tag_name,
-                    standard=(r.get("standard") or ""),
+                    standard=normalized_std,
                     description=(r.get("description") or ""),
                     is_active=True,
                     sort_order=0,
@@ -1995,6 +2004,7 @@ async def approve_tag_suggestion(
         session.add(cat)
         session.commit()
         session.refresh(cat)
+    standard = normalize_standard_for_category(session, int(cat.id), standard)
 
     existing = session.exec(
         select(TagDefinition).where(TagDefinition.category_id == cat.id, TagDefinition.name == tag_name)
@@ -2588,6 +2598,7 @@ def admin_users_update(
     name: str = Form(...),
     email: str = Form(...),
     password: str = Form(""),
+    role: str = Form(""),
     user: User = Depends(require_role("admin")),
     session: Session = Depends(get_session),
 ):
@@ -2617,6 +2628,18 @@ def admin_users_update(
     u.name = (name or "").strip() or u.name
     u.email = email_norm
 
+    role_raw = (role or "").strip()
+    if role_raw:
+        try:
+            new_role = Role(role_raw)
+        except Exception:
+            return _redirect("/admin/users?error=角色非法")
+
+        err = validate_role_change(session=session, target_user=u, new_role=new_role, acting_user=user)
+        if err:
+            return _redirect(f"/admin/users?error={quote(err)}")
+        u.role = new_role
+
     pwd = (password or "").strip()
     if pwd:
         if len(pwd) < 6:
@@ -2625,6 +2648,10 @@ def admin_users_update(
 
     session.add(u)
     session.commit()
+    # If admin changed their own role to non-admin, avoid redirecting to admin-only page.
+    role_val_after = getattr(u.role, "value", None) or str(u.role)
+    if user.id == u.id and role_val_after != Role.admin.value:
+        return _redirect("/conversations?message=已更新账号信息（当前账号权限已变更）")
     return _redirect("/admin/users?message=已更新账号信息")
 
 
@@ -3209,7 +3236,8 @@ def conversations_list(
     ).all()
 
     # 查询每个对话的标签信息（通过最新分析）
-    tags_by_conv: dict[int, list[str]] = {}
+    # conversations 列表页只展示 AI 命中的标签（ConversationTagHit），并携带 reason 供前端悬浮/长按查看。
+    tags_by_conv: dict[int, list[dict[str, str]]] = {}
     if conv_ids and latest_by_conv:
         analysis_ids = [a.id for a in latest_by_conv.values() if a and a.id is not None]
         if analysis_ids:
@@ -3217,6 +3245,12 @@ def conversations_list(
                 select(ConversationTagHit, TagDefinition)
                 .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
                 .where(ConversationTagHit.analysis_id.in_(analysis_ids))
+                .order_by(
+                    TagDefinition.category_id.asc(),
+                    TagDefinition.sort_order.asc(),
+                    TagDefinition.id.asc(),
+                    ConversationTagHit.id.asc(),
+                )
             ).all()
             
             # 构建 analysis_id -> conversation_id 映射
@@ -3226,13 +3260,28 @@ def conversations_list(
                     analysis_to_conv[analysis.id] = conv_id
             
             # 构建每个对话的标签列表
+            seen_tag_ids_by_conv: dict[int, set[int]] = {}
             for hit, tag_def in tag_hits:
-                if hit.analysis_id in analysis_to_conv:
-                    conv_id = analysis_to_conv[hit.analysis_id]
-                    if conv_id not in tags_by_conv:
-                        tags_by_conv[conv_id] = []
-                    if tag_def and tag_def.name:
-                        tags_by_conv[conv_id].append(tag_def.name)
+                conv_id = analysis_to_conv.get(hit.analysis_id)
+                if not conv_id:
+                    continue
+                if not tag_def or not tag_def.id or not tag_def.name:
+                    continue
+
+                if conv_id not in tags_by_conv:
+                    tags_by_conv[conv_id] = []
+                    seen_tag_ids_by_conv[conv_id] = set()
+
+                if tag_def.id in seen_tag_ids_by_conv[conv_id]:
+                    continue
+                seen_tag_ids_by_conv[conv_id].add(tag_def.id)
+
+                tags_by_conv[conv_id].append(
+                    {
+                        "name": str(tag_def.name),
+                        "ai_reason": str((hit.reason or "")).strip(),
+                    }
+                )
 
     return _template(
         request,
@@ -5539,6 +5588,126 @@ def tags_report_pivot_data(
         for k in all_total_keys
     ]
 
+    # 命中任意「有效标签」的去重对话数（用于“质检对话数”与“对话数占比”）
+    tagged_total_base_stmt = (
+        select(
+            Conversation.platform.label("platform"),
+            binding_user_id.label("agent_user_id"),
+            ConversationAnalysis.reception_scenario.label("scenario"),
+            ConversationAnalysis.satisfaction_change.label("satisfaction"),
+            func.count(func.distinct(Conversation.id)).label("cnt"),
+        )
+        .select_from(ConversationTagHit)
+        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
+        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+        .where(TagDefinition.is_active == True)
+    )
+
+    tagged_total_group_cols = (
+        Conversation.platform,
+        binding_user_id,
+        ConversationAnalysis.reception_scenario,
+        ConversationAnalysis.satisfaction_change,
+    )
+
+    def _tagged_total_rows(start_dt, end_excl):
+        stmt = _apply_filters(tagged_total_base_stmt, start_dt, end_excl).group_by(*tagged_total_group_cols)
+        return session.exec(stmt).all()
+
+    tagged_total_cur_rows = _tagged_total_rows(period["cur_start"], period["cur_end_excl"])
+    tagged_total_prev_rows = _tagged_total_rows(period["prev_start"], period["prev_end_excl"]) if period["prev_start"] else []
+    tagged_total_yoy_rows = _tagged_total_rows(period["yoy_start"], period["yoy_end_excl"]) if period["yoy_start"] else []
+
+    def _tagged_total_index(rows):
+        idx: dict[tuple, int] = {}
+        for plat, uid, scenario, satisfaction, cnt in rows:
+            key = (str(plat or ""), int(uid or 0), str(scenario or ""), str(satisfaction or ""))
+            idx[key] = int(cnt or 0)
+        return idx
+
+    tagged_total_cur_idx = _tagged_total_index(tagged_total_cur_rows)
+    tagged_total_prev_idx = _tagged_total_index(tagged_total_prev_rows)
+    tagged_total_yoy_idx = _tagged_total_index(tagged_total_yoy_rows)
+
+    all_tagged_total_keys = set(tagged_total_cur_idx.keys()) | set(tagged_total_prev_idx.keys()) | set(tagged_total_yoy_idx.keys())
+    tagged_totals = [
+        {
+            "platform": k[0],
+            "agent_user_id": k[1],
+            "reception_scenario": k[2],
+            "satisfaction_change": k[3],
+            "current": tagged_total_cur_idx.get(k, 0),
+            "prev": tagged_total_prev_idx.get(k, 0),
+            "yoy": tagged_total_yoy_idx.get(k, 0),
+        }
+        for k in all_tagged_total_keys
+    ]
+
+    tagged_category_base_stmt = (
+        select(
+            TagDefinition.category_id.label("category_id"),
+            Conversation.platform.label("platform"),
+            binding_user_id.label("agent_user_id"),
+            ConversationAnalysis.reception_scenario.label("scenario"),
+            ConversationAnalysis.satisfaction_change.label("satisfaction"),
+            func.count(func.distinct(Conversation.id)).label("cnt"),
+        )
+        .select_from(ConversationTagHit)
+        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
+        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+        .where(TagDefinition.is_active == True)
+    )
+
+    tagged_category_group_cols = (
+        TagDefinition.category_id,
+        Conversation.platform,
+        binding_user_id,
+        ConversationAnalysis.reception_scenario,
+        ConversationAnalysis.satisfaction_change,
+    )
+
+    def _tagged_category_rows(start_dt, end_excl):
+        stmt = _apply_filters(tagged_category_base_stmt, start_dt, end_excl).group_by(*tagged_category_group_cols)
+        return session.exec(stmt).all()
+
+    tagged_category_cur_rows = _tagged_category_rows(period["cur_start"], period["cur_end_excl"])
+    tagged_category_prev_rows = _tagged_category_rows(period["prev_start"], period["prev_end_excl"]) if period["prev_start"] else []
+    tagged_category_yoy_rows = _tagged_category_rows(period["yoy_start"], period["yoy_end_excl"]) if period["yoy_start"] else []
+
+    def _tagged_category_index(rows):
+        idx: dict[tuple, int] = {}
+        for cat_id, plat, uid, scenario, satisfaction, cnt in rows:
+            key = (int(cat_id or 0), str(plat or ""), int(uid or 0), str(scenario or ""), str(satisfaction or ""))
+            idx[key] = int(cnt or 0)
+        return idx
+
+    tagged_category_cur_idx = _tagged_category_index(tagged_category_cur_rows)
+    tagged_category_prev_idx = _tagged_category_index(tagged_category_prev_rows)
+    tagged_category_yoy_idx = _tagged_category_index(tagged_category_yoy_rows)
+
+    all_tagged_category_keys = (
+        set(tagged_category_cur_idx.keys()) | set(tagged_category_prev_idx.keys()) | set(tagged_category_yoy_idx.keys())
+    )
+    tagged_category_totals = [
+        {
+            "category_id": k[0],
+            "platform": k[1],
+            "agent_user_id": k[2],
+            "reception_scenario": k[3],
+            "satisfaction_change": k[4],
+            "current": tagged_category_cur_idx.get(k, 0),
+            "prev": tagged_category_prev_idx.get(k, 0),
+            "yoy": tagged_category_yoy_idx.get(k, 0),
+        }
+        for k in all_tagged_category_keys
+    ]
+
     def _date_str(d: datetime | None) -> str:
         return d.date().isoformat() if d else ""
 
@@ -5563,6 +5732,8 @@ def tags_report_pivot_data(
         },
         "tag_hits": tag_hits,
         "totals": totals,
+        "tagged_totals": tagged_totals,
+        "tagged_category_totals": tagged_category_totals,
     }
 
 
