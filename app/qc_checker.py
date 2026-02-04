@@ -97,7 +97,7 @@ def get_conversations_eligible_for_qc(
     session: Session,
     *,
     min_messages: int = 5,
-    limit: int = 100
+    limit: int | None = 100
 ) -> List[Dict[str, Any]]:
     """获取符合自动质检条件的对话列表.
     
@@ -109,7 +109,7 @@ def get_conversations_eligible_for_qc(
     Args:
         session: 数据库会话
         min_messages: 最少消息数阈值
-        limit: 返回数量限制
+        limit: 返回数量限制；传 None 或 <=0 表示不限制
     
     Returns:
         符合条件的对话列表，每项包含 {conversation_id, message_count, agent_accounts}
@@ -146,7 +146,18 @@ def get_conversations_eligible_for_qc(
     # 3. 检查每个对话中的客服账号是否全部绑定
     eligible_convs: List[Dict[str, Any]] = []
     
-    for cid in eligible_conv_ids[:limit]:  # 限制检查数量
+    max_take: int | None = None
+    if limit is not None:
+        try:
+            max_take = int(limit)
+        except Exception:
+            max_take = None
+    if max_take is not None and max_take <= 0:
+        max_take = None
+
+    conv_id_pool = eligible_conv_ids if max_take is None else eligible_conv_ids[:max_take]
+
+    for cid in conv_id_pool:  # 可选限制检查数量
         conv = session.get(Conversation, cid)
         if not conv:
             continue

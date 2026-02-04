@@ -148,32 +148,21 @@ def ensure_app_config(session: Session) -> None:
 
 
 def ensure_default_tag_categories(session: Session) -> None:
-    """Ensure the 3 default level-1 categories exist.
+    """Ensure the default level-1 categories exist when DB is empty.
 
     你后续可以在“标签管理”里继续新增/改名/停用。
     """
 
+    existing_any = session.exec(select(TagCategory).limit(1)).first()
+    if existing_any:
+        return
+
     defaults = [
-        ("客服接待", 10),
-        ("服务流程", 20),
+        ("其他标签", 10),
+        ("客服接待", 20),
         ("产品质量投诉", 30),
     ]
 
-    existing = {c.name: c for c in session.exec(select(TagCategory)).all()}
-    changed = False
     for name, order in defaults:
-        c = existing.get(name)
-        if c:
-            if getattr(c, "is_active", True) is False:
-                c.is_active = True
-                changed = True
-            if getattr(c, "sort_order", 0) != order:
-                c.sort_order = order
-                changed = True
-            continue
         session.add(TagCategory(name=name, description="", sort_order=order, is_active=True))
-        changed = True
-
-    if changed:
-        session.commit()
-
+    session.commit()

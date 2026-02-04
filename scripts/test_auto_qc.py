@@ -14,7 +14,10 @@ import sys
 from pathlib import Path
 
 # 添加 app 目录到路径
-app_dir = Path(__file__).parent.parent / "app"
+root_dir = Path(__file__).resolve().parent.parent
+app_dir = root_dir / "app"
+if not app_dir.exists():
+    app_dir = root_dir
 sys.path.insert(0, str(app_dir))
 
 from sqlmodel import Session, select
@@ -153,10 +156,15 @@ def test_database_statistics():
         
         # 消息数>5的对话
         from sqlalchemy import func
+        conv_ids_sample = [
+            c[0] if isinstance(c, (list, tuple)) else c
+            for c in conv_count[:1000]
+        ]
         msg_counts = session.exec(
             select(func.count(Message.id))
-            .where(Message.conversation_id.in_([c[0] for c in conv_count[:1000]]))  # 限制查询范围
-        ).all()
+            .where(Message.conversation_id.in_(conv_ids_sample))  # 限制查询范围
+        ).one()
+        print(f"抽样对话消息总数(前1000对话): {msg_counts}")
         
         # 已绑定的客服账号数
         bindings = session.exec(

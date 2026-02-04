@@ -399,12 +399,16 @@ def enqueue_daily_job(
 def claim_one_daily_job(session: Session) -> DailyAISummaryJob | None:
     """Pick one pending daily job and mark running."""
     try:
-        job = session.exec(
+        base_stmt = (
             select(DailyAISummaryJob)
             .where(DailyAISummaryJob.status == "pending")
             .order_by(DailyAISummaryJob.created_at.asc())
             .limit(1)
-        ).first()
+        )
+        try:
+            job = session.exec(base_stmt.with_for_update(skip_locked=True)).first()
+        except Exception:
+            job = session.exec(base_stmt).first()
     except ProgrammingError:
         # The table may not exist yet (startup race / first deploy).
         # Treat as "no job" and let polling retry later.

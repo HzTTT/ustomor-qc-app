@@ -1,201 +1,1089 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
-  <div>
-    <h1 class="text-2xl font-semibold">聊天记录</h1>
-    <div class="text-sm text-slate-500 mt-1">按时间倒序查看，可按客服/标签/日期范围筛选。</div>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+  .conv-page {
+    font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+
+  .conv-page .page-title {
+    font-family: inherit;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  .filter-card {
+    position: relative;
+    overflow: visible;
+    border-radius: 20px;
+    border: 1px solid #e2e8f0;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 35%, #ecfdf5 100%);
+  }
+
+  .filter-card::before {
+    content: "";
+    position: absolute;
+    top: -120px;
+    right: -120px;
+    width: 320px;
+    height: 320px;
+    background: radial-gradient(circle, rgba(251, 191, 36, 0.25), rgba(251, 191, 36, 0));
+    pointer-events: none;
+  }
+
+  .filter-card::after {
+    content: "";
+    position: absolute;
+    bottom: -140px;
+    left: -120px;
+    width: 320px;
+    height: 320px;
+    background: radial-gradient(circle, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0));
+    pointer-events: none;
+  }
+
+  .filter-card-inner {
+    position: relative;
+    z-index: 1;
+  }
+
+  .filter-kicker {
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    color: #94a3b8;
+  }
+
+  .filter-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #0f172a;
+    margin-top: 0.25rem;
+  }
+
+  .filter-subtitle {
+    font-size: 0.85rem;
+    color: #64748b;
+  }
+
+  .filter-label {
+    font-size: 0.72rem;
+    color: #64748b;
+    letter-spacing: 0.04em;
+  }
+
+  .filter-input,
+  .filter-select,
+  .filter-button {
+    width: 100%;
+    padding: 0.55rem 0.85rem;
+    border-radius: 0.85rem;
+    border: 1px solid #e2e8f0;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+  }
+
+  .filter-input:focus,
+  .filter-select:focus,
+  .filter-button:focus {
+    outline: none;
+    border-color: #94a3b8;
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08);
+  }
+
+  .filter-panel {
+    border-radius: 14px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+    max-height: min(24rem, calc(100vh - 12rem));
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .filter-panel-head {
+    position: sticky;
+    top: 0;
+    background: #fff;
+    padding-bottom: 0.5rem;
+    z-index: 1;
+  }
+
+  .filter-action {
+    border-radius: 999px;
+    border: 1px solid #e2e8f0;
+    padding: 0.2rem 0.65rem;
+    background: #fff;
+    transition: background 150ms ease, border-color 150ms ease;
+  }
+
+  .filter-action:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+  }
+
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 0.75rem;
+  }
+
+  .filter-cta {
+    background: #0f172a;
+    color: #fff;
+    border-radius: 0.95rem;
+    padding: 0.65rem 1rem;
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
+    transition: transform 150ms ease, box-shadow 150ms ease;
+  }
+
+  .filter-cta:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 30px rgba(15, 23, 42, 0.2);
+  }
+
+  .filter-ghost {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.9rem;
+    padding: 0.55rem 1rem;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .filter-ghost:hover {
+    border-color: #cbd5e1;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  }
+
+  .table-card {
+    border-radius: 20px;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    background: #fff;
+  }
+
+  .table-refined thead {
+    background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%);
+  }
+
+  .table-refined tbody tr:hover {
+    background: #f8fafc;
+  }
+</style>
+
+<div class="conv-page space-y-5">
+  <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+    <div>
+      <div class="filter-kicker">对话中心</div>
+      <h1 class="page-title text-3xl">聊天记录</h1>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <span class="filter-chip">默认时间倒序</span>
+        <span class="filter-chip">支持多维筛选</span>
+        <span class="filter-chip">多选/反选/分类全选</span>
+      </div>
+    </div>
+    <div class="text-sm text-slate-500 max-w-md">
+      按客服、标签、日期与关键词快速定位需要复查的对话。
+    </div>
   </div>
-  <div class="flex items-center gap-2">
-    <a href="/conversations" class="px-3 py-2 rounded-xl border bg-white text-sm">重置筛选</a>
-  </div>
-</div>
 
-<div class="bg-white border rounded-2xl p-4 mb-6">
-  <form method="get" action="/conversations" class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12 gap-3 items-end">
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">站内客服账号</label>
-      <select name="agent_id" class="w-full px-3 py-2 rounded-xl border">
-        <option value="">全部</option>
-        {% for a in agents %}
-          <option value="{{ a.id }}" {% if agent_id and a.id == agent_id %}selected{% endif %}>{{ a.username }} · {{ a.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
+  <div class="filter-card">
+    <div class="filter-card-inner p-5">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+        <div>
+          <div class="filter-kicker">筛选模块</div>
+          <div class="filter-title">精准定位目标对话</div>
+          <div class="filter-subtitle">支持多选、反选与分类全选组合。</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" id="clear-filters" class="filter-ghost text-sm">清空筛选</button>
+          <span class="text-xs text-slate-400">可叠加多条件</span>
+        </div>
+      </div>
 
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">站外客服账号</label>
-      <select name="ext_agent_account" class="w-full px-3 py-2 rounded-xl border">
-        <option value="">全部</option>
-        {% for acc in external_agent_accounts %}
-          <option value="{{ acc }}" {% if ext_agent_account and acc == ext_agent_account %}selected{% endif %}>{{ acc }}</option>
-        {% endfor %}
-      </select>
-    </div>
+      <form id="conversations-filters" method="get" action="/conversations" class="grid grid-cols-1 md:grid-cols-6 lg:grid-cols-12 gap-4 items-end">
+        <div class="md:col-span-3 lg:col-span-4">
+          <label class="filter-label block mb-2">站内客服账号</label>
+          <div class="relative" data-dropdown data-dropdown-group="agent">
+            <button type="button" class="filter-button flex items-center justify-between gap-3 text-left text-sm" data-dropdown-button>
+              <span>选择客服</span>
+              <span class="text-xs text-slate-500" data-dropdown-count>已选 {{ agent_ids|length }}</span>
+            </button>
+            <div class="filter-panel absolute left-0 right-0 mt-2 p-3 hidden z-50" data-dropdown-panel>
+              <div class="filter-panel-head flex items-center justify-between">
+                <div class="text-xs text-slate-500">站内客服账号</div>
+                <div class="flex gap-2 text-xs">
+                  <button type="button" class="filter-action" data-action="select-all" data-target="agent">全选</button>
+                  <button type="button" class="filter-action" data-action="invert-all" data-target="agent">反选</button>
+                </div>
+              </div>
+              <div class="pr-1 text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                {% for a in agents %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" name="agent_id" value="{{ a.id }}" data-group="agent" class="accent-slate-900" {% if (not agent_ids) or (a.id in agent_ids) %}checked{% endif %} />
+                    <span>{{ a.username }} · {{ a.name }}</span>
+                  </label>
+                {% endfor %}
+                {% if agents|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选客服</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
 
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">标签/关键词</label>
-      <input name="tag" value="{{ tag }}" placeholder="例如：态度 / 退款 / 尺码" class="w-full px-3 py-2 rounded-xl border" />
-    </div>
+        <div class="md:col-span-3 lg:col-span-4">
+          <label class="filter-label block mb-2">站外客服账号</label>
+          <div class="relative" data-dropdown data-dropdown-group="ext-agent">
+            <button type="button" class="filter-button flex items-center justify-between gap-3 text-left text-sm" data-dropdown-button>
+              <span>选择站外账号</span>
+              <span class="text-xs text-slate-500" data-dropdown-count>已选 {{ ext_agent_accounts_selected|length }}</span>
+            </button>
+            <div class="filter-panel absolute left-0 right-0 mt-2 p-3 hidden z-50" data-dropdown-panel>
+              <div class="filter-panel-head flex items-center justify-between">
+                <div class="text-xs text-slate-500">站外客服账号</div>
+                <div class="flex gap-2 text-xs">
+                  <button type="button" class="filter-action" data-action="select-all" data-target="ext-agent">全选</button>
+                  <button type="button" class="filter-action" data-action="invert-all" data-target="ext-agent">反选</button>
+                </div>
+              </div>
+              <div class="pr-1 text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                {% for acc in external_agent_accounts %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" name="ext_agent_account" value="{{ acc }}" data-group="ext-agent" class="accent-slate-900" {% if (not ext_agent_accounts_selected) or (acc in ext_agent_accounts_selected) %}checked{% endif %} />
+                    <span>{{ acc }}</span>
+                  </label>
+                {% endfor %}
+                {% if external_agent_accounts|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选账号</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
 
+        <div class="md:col-span-6 lg:col-span-4">
+          <label class="filter-label block mb-2">聊天匹配查询</label>
+          <input name="match" value="{{ match }}" placeholder="只要当日对话出现，就会命中" class="filter-input" />
+        </div>
 
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">聊天匹配查询</label>
-      <input name="match" value="{{ match }}" placeholder="只要当日对话出现，就会命中" class="w-full px-3 py-2 rounded-xl border" />
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">接待场景</label>
-      <select name="reception_scenario" class="w-full px-3 py-2 rounded-xl border text-sm">
-        <option value="">全部</option>
-        <option value="售前" {% if reception_scenario == "售前" %}selected{% endif %}>售前</option>
-        <option value="售后" {% if reception_scenario == "售后" %}selected{% endif %}>售后</option>
-        <option value="售前和售后" {% if reception_scenario == "售前和售后" %}selected{% endif %}>售前和售后</option>
-        <option value="其他接待场景" {% if reception_scenario == "其他接待场景" %}selected{% endif %}>其他</option>
-      </select>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">满意度变化</label>
-      <select name="satisfaction_change" class="w-full px-3 py-2 rounded-xl border text-sm">
-        <option value="">全部</option>
-        <option value="大幅减少" {% if satisfaction_change == "大幅减少" %}selected{% endif %}>大幅减少</option>
-        <option value="小幅减少" {% if satisfaction_change == "小幅减少" %}selected{% endif %}>小幅减少</option>
-        <option value="无显著变化" {% if satisfaction_change == "无显著变化" %}selected{% endif %}>无显著变化</option>
-        <option value="小幅增加" {% if satisfaction_change == "小幅增加" %}selected{% endif %}>小幅增加</option>
-        <option value="大幅增加" {% if satisfaction_change == "大幅增加" %}selected{% endif %}>大幅增加</option>
-      </select>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">具体标签</label>
-      <select name="tag_id" class="w-full px-3 py-2 rounded-xl border text-sm">
-        <option value="">全部</option>
-        {% for cat in tag_categories %}
-          <optgroup label="{{ cat.name }}">
-            {% for t in tag_definitions %}
-              {% if t.category_id == cat.id %}
-                <option value="{{ t.id }}" {% if tag_id and t.id|string == tag_id %}selected{% endif %}>{{ t.name }}</option>
-              {% endif %}
-            {% endfor %}
-          </optgroup>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">CID 编号</label>
-      <input name="cid" type="number" value="{{ cid }}" placeholder="对话ID" class="w-full px-3 py-2 rounded-xl border" />
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">是否已AI质检</label>
-      <select name="has_analysis" class="w-full px-3 py-2 rounded-xl border text-sm">
-        <option value="">全部</option>
-        <option value="1" {% if has_analysis == "1" %}selected{% endif %}>已质检</option>
-        <option value="0" {% if has_analysis == "0" %}selected{% endif %}>未质检</option>
-      </select>
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">开始日期</label>
-      <input name="start" type="date" value="{{ start }}" class="w-full px-3 py-2 rounded-xl border" />
-    </div>
-
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">结束日期</label>
-      <input name="end" type="date" value="{{ end }}" class="w-full px-3 py-2 rounded-xl border" />
-    </div>
-
-    <div class="flex flex-col items-start gap-2">
-      <label class="flex items-center gap-2 text-sm text-slate-700">
-        <input type="checkbox" name="only_flagged" value="1" {% if only_flagged %}checked{% endif %} />
-        仅看需要复查
-      </label>
-      <button class="w-full px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">筛选</button>
-    </div>
-  </form>
-</div>
-
-<div class="bg-white border rounded-2xl overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50">
-      <tr>
-        <th class="text-left px-4 py-3">CID 编号</th>
-        <th class="text-left px-4 py-3">时间</th>
-        <th class="text-left px-4 py-3">轮数</th>
-        <th class="text-left px-4 py-3">客服</th>
-        <th class="text-left px-4 py-3">是否已质检</th>
-        <th class="text-left px-4 py-3">满意度变化</th>
-        <th class="text-left px-4 py-3">全部具体标签</th>
-        <th class="text-left px-4 py-3">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for c in convos %}
-        {% set a = latest_by_conv.get(c.id) %}
-        {% set ts = display_ts_by_conv.get(c.id) %}
-        {% set conv_tags = tags_by_conv.get(c.id, []) %}
-        <tr class="border-t">
-          <td class="px-4 py-3 text-slate-700 font-medium">{{ c.id }}</td>
-          <td class="px-4 py-3 text-slate-600">{% if ts %}{{ ts.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
-          <td class="px-4 py-3 text-slate-700">{{ rounds_by_conv.get(c.id, 0) }}</td>
-          <td class="px-4 py-3">{{ display_agent_label_by_conv.get(c.id, "-") }}</td>
-          <td class="px-4 py-3">
-            {% if a %}
-              <span class="text-xs px-2 py-1 rounded-full bg-green-50 border text-green-700">已质检</span>
-            {% else %}
-              <span class="text-xs px-2 py-1 rounded-full bg-gray-50 border text-gray-600">未质检</span>
-            {% endif %}
-          </td>
-          <td class="px-4 py-3 text-slate-700">
-            {% if a and a.satisfaction_change %}
-              {{ a.satisfaction_change }}
-            {% else %}
-              -
-            {% endif %}
-          </td>
-          <td class="px-4 py-3 text-slate-700">
-            {% if conv_tags %}
-              <div class="flex flex-wrap gap-1">
-                {% for tag in conv_tags %}
-                  <span class="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700">{{ tag }}</span>
+        <div class="md:col-span-3 lg:col-span-4">
+          <label class="filter-label block mb-2">接待场景</label>
+          <div class="relative" data-dropdown data-dropdown-group="scenario">
+            <button type="button" class="filter-button flex items-center justify-between gap-3 text-left text-sm" data-dropdown-button>
+              <span>选择场景</span>
+              <span class="text-xs text-slate-500" data-dropdown-count>已选 {{ reception_scenarios|length }}</span>
+            </button>
+            <div class="filter-panel absolute left-0 right-0 mt-2 p-3 hidden z-50" data-dropdown-panel>
+              <div class="filter-panel-head flex items-center justify-between">
+                <div class="text-xs text-slate-500">接待场景</div>
+                <div class="flex gap-2 text-xs">
+                  <button type="button" class="filter-action" data-action="select-all" data-target="scenario">全选</button>
+                  <button type="button" class="filter-action" data-action="invert-all" data-target="scenario">反选</button>
+                </div>
+              </div>
+              <div class="pr-1 text-sm grid grid-cols-1 gap-y-1">
+                {% set scenarios = ["售前", "售后", "售前和售后", "其他接待场景"] %}
+                {% for s in scenarios %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" name="reception_scenario" value="{{ s }}" data-group="scenario" class="accent-slate-900" {% if (not reception_scenarios) or (s in reception_scenarios) %}checked{% endif %} />
+                    <span>{{ "其他" if s == "其他接待场景" else s }}</span>
+                  </label>
                 {% endfor %}
               </div>
-            {% else %}
-              -
-            {% endif %}
-          </td>
-          <td class="px-4 py-3">
-            <a class="px-3 py-1 rounded-xl border bg-white text-xs" href="/conversations/{{ c.id }}">查看</a>
-          </td>
-        </tr>
-      {% endfor %}
-      {% if convos|length == 0 %}
-        <tr class="border-t">
-          <td class="px-4 py-6 text-slate-500" colspan="8">暂无数据</td>
-        </tr>
-      {% endif %}
-    </tbody>
-  </table>
-</div>
+            </div>
+          </div>
+        </div>
 
-{% if total_pages > 1 %}
-  <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
-    <div>
-      共 {{ total }} 条 · 每页 {{ page_size }} 条 · 第 {{ page }} / {{ total_pages }} 页
-    </div>
-    <div class="flex items-center gap-2">
-      {% if page > 1 %}
-        <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">上一页</a>
-      {% else %}
-        <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">上一页</span>
-      {% endif %}
-      {% if page < total_pages %}
-        <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">下一页</a>
-      {% else %}
-        <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">下一页</span>
-      {% endif %}
+        <div class="md:col-span-3 lg:col-span-4">
+          <label class="filter-label block mb-2">满意度变化</label>
+          <div class="relative" data-dropdown data-dropdown-group="satisfaction">
+            <button type="button" class="filter-button flex items-center justify-between gap-3 text-left text-sm" data-dropdown-button>
+              <span>选择变化</span>
+              <span class="text-xs text-slate-500" data-dropdown-count>已选 {{ satisfaction_changes|length }}</span>
+            </button>
+            <div class="filter-panel absolute left-0 right-0 mt-2 p-3 hidden z-50" data-dropdown-panel>
+              <div class="filter-panel-head flex items-center justify-between">
+                <div class="text-xs text-slate-500">满意度变化</div>
+                <div class="flex gap-2 text-xs">
+                  <button type="button" class="filter-action" data-action="select-all" data-target="satisfaction">全选</button>
+                  <button type="button" class="filter-action" data-action="invert-all" data-target="satisfaction">反选</button>
+                </div>
+              </div>
+              <div class="pr-1 text-sm grid grid-cols-1 gap-y-1">
+                {% set satisfactions = ["大幅减少", "小幅减少", "无显著变化", "小幅增加", "大幅增加"] %}
+                {% for s in satisfactions %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" name="satisfaction_change" value="{{ s }}" data-group="satisfaction" class="accent-slate-900" {% if (not satisfaction_changes) or (s in satisfaction_changes) %}checked{% endif %} />
+                    <span>{{ s }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-6 lg:col-span-4">
+          <label class="filter-label block mb-2">具体标签</label>
+          <div class="relative" data-dropdown data-dropdown-group="tag">
+            <button type="button" class="filter-button flex items-center justify-between gap-3 text-left text-sm" data-dropdown-button>
+              <span>选择标签</span>
+              <span class="text-xs text-slate-500" data-dropdown-count>已选 {{ tag_ids|length }}</span>
+            </button>
+            <div class="filter-panel absolute left-0 right-0 mt-2 p-3 hidden z-50" data-dropdown-panel>
+              <div class="filter-panel-head flex items-center justify-between">
+                <div class="text-xs text-slate-500">具体标签</div>
+                <div class="flex gap-2 text-xs">
+                  <button type="button" class="filter-action" data-action="select-all" data-target="tag">全选</button>
+                  <button type="button" class="filter-action" data-action="invert-all" data-target="tag">反选</button>
+                </div>
+              </div>
+              <div class="pr-1 text-sm space-y-3">
+                {% for cat in tag_categories %}
+                  <div class="border-l-2 border-slate-200 pl-2">
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                      <span class="font-medium">{{ cat.name }}</span>
+                      <button type="button" class="filter-action" data-action="select-category" data-target="tag" data-category="{{ cat.id }}">全选该分类</button>
+                      <button type="button" class="filter-action" data-action="invert-category" data-target="tag" data-category="{{ cat.id }}">反选该分类</button>
+                    </div>
+                    <div class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                      {% set ns = namespace(has_tags=false) %}
+                      {% for t in tag_definitions %}
+                        {% if t.category_id == cat.id %}
+                          {% set ns.has_tags = true %}
+                          <label class="flex items-center gap-2">
+                            <input type="checkbox" name="tag_id" value="{{ t.id }}" data-group="tag" data-category="{{ cat.id }}" class="accent-slate-900" {% if (not tag_ids) or (t.id|string in tag_ids) %}checked{% endif %} />
+                            <span>{{ t.name }}</span>
+                          </label>
+                        {% endif %}
+                      {% endfor %}
+                      {% if not ns.has_tags %}
+                        <div class="text-xs text-slate-500">暂无标签</div>
+                      {% endif %}
+                    </div>
+                  </div>
+                {% endfor %}
+                {% if tag_categories|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选标签</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+	        <div class="md:col-span-3 lg:col-span-2">
+	          <label class="filter-label block mb-2">CID 编号</label>
+	          <input name="cid" type="number" value="{{ cid }}" placeholder="对话ID" class="filter-input" />
+	        </div>
+
+	        <div class="md:col-span-3 lg:col-span-2">
+	          <label class="filter-label block mb-2">消息轮数范围</label>
+	          <div class="flex items-center gap-2">
+	            <input name="min_rounds" type="number" min="0" value="{{ min_rounds }}" placeholder="最低" class="filter-input flex-1" />
+	            <span class="text-xs text-slate-400">-</span>
+	            <input name="max_rounds" type="number" min="0" value="{{ max_rounds }}" placeholder="最高" class="filter-input flex-1" />
+	          </div>
+	        </div>
+
+	        <div class="md:col-span-3 lg:col-span-2">
+	          <label class="filter-label block mb-2">是否已AI质检</label>
+	          <select name="has_analysis" class="filter-select text-sm">
+	            <option value="">全部</option>
+	            <option value="1" {% if has_analysis == "1" %}selected{% endif %}>已质检</option>
+	            <option value="0" {% if has_analysis == "0" %}selected{% endif %}>未质检</option>
+	          </select>
+	        </div>
+
+	        <div class="md:col-span-6 lg:col-span-6">
+	          <label class="filter-label block mb-2">时间筛选</label>
+	          <div class="grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
+              <div class="sm:col-span-2">
+                <label class="filter-label block mb-1">时间维度</label>
+                <select id="time-mode" name="time_mode" class="filter-select text-sm">
+                  {% for k, label in time_modes %}
+                    <option value="{{ k }}" {% if k == time_mode %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div id="year-wrap" class="sm:col-span-1 hidden">
+                <label class="filter-label block mb-1">年份</label>
+                <select id="year-select" class="filter-select text-sm"></select>
+              </div>
+              <div id="quarter-wrap" class="sm:col-span-1 hidden">
+                <label class="filter-label block mb-1">季度</label>
+                <select id="quarter-select" class="filter-select text-sm"></select>
+              </div>
+              <div id="month-wrap" class="sm:col-span-1 hidden">
+                <label class="filter-label block mb-1">月份</label>
+                <select id="month-select" class="filter-select text-sm"></select>
+              </div>
+              <div id="week-wrap" class="sm:col-span-1 hidden">
+                <label class="filter-label block mb-1">周次</label>
+                <select id="week-select" class="filter-select text-sm"></select>
+              </div>
+              <div id="day-wrap" class="sm:col-span-2 hidden">
+                <label class="filter-label block mb-1">日期</label>
+                <input type="date" id="day-select" class="filter-input text-sm" />
+              </div>
+              <div id="custom-start-wrap" class="sm:col-span-2 hidden">
+                <label class="filter-label block mb-1">起始</label>
+                <input name="start" type="date" id="start-date" value="{{ start }}" class="filter-input text-sm" />
+              </div>
+              <div id="custom-end-wrap" class="sm:col-span-2 hidden">
+                <label class="filter-label block mb-1">结束</label>
+                <input name="end" type="date" id="end-date" value="{{ end }}" class="filter-input text-sm" />
+              </div>
+	          </div>
+            {% if period_label and time_mode != "all" %}
+              <div id="period-label" class="mt-2 text-xs text-slate-500">{{ period_label }}</div>
+            {% else %}
+              <div id="period-label" class="mt-2 text-xs text-slate-500 hidden"></div>
+            {% endif %}
+	        </div>
+
+	        <div class="md:col-span-6 lg:col-span-3">
+	          <div class="h-full flex flex-col items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white/80 p-3">
+	            <label class="flex items-center gap-2 text-sm text-slate-700">
+	              <input type="checkbox" name="only_flagged" value="1" class="accent-slate-900" {% if only_flagged %}checked{% endif %} />
+	              仅看需要复查
+	            </label>
+            <button class="filter-cta w-full text-sm">筛选</button>
+          </div>
+        </div>
+      </form>
     </div>
   </div>
-{% endif %}
+
+  <div class="table-card">
+    <table class="table-refined w-full text-sm">
+      <thead>
+        <tr>
+          <th class="text-left px-4 py-3">CID 编号</th>
+          <th class="text-left px-4 py-3">时间</th>
+          <th class="text-left px-4 py-3">轮数</th>
+          <th class="text-left px-4 py-3">客服</th>
+          <th class="text-left px-4 py-3">是否已质检</th>
+          <th class="text-left px-4 py-3">满意度变化</th>
+          <th class="text-left px-4 py-3">全部具体标签</th>
+          <th class="text-left px-4 py-3">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in convos %}
+          {% set a = latest_by_conv.get(c.id) %}
+          {% set ts = display_ts_by_conv.get(c.id) %}
+          {% set conv_tags = tags_by_conv.get(c.id, []) %}
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-3 text-slate-700 font-medium">{{ c.id }}</td>
+            <td class="px-4 py-3 text-slate-600">{% if ts %}{{ ts.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
+            <td class="px-4 py-3 text-slate-700">{{ rounds_by_conv.get(c.id, 0) }}</td>
+            <td class="px-4 py-3">{{ display_agent_label_by_conv.get(c.id, "-") }}</td>
+            <td class="px-4 py-3">
+              {% if a %}
+                <span class="text-xs px-2 py-1 rounded-full bg-green-50 border text-green-700">已质检</span>
+              {% else %}
+                <span class="text-xs px-2 py-1 rounded-full bg-gray-50 border text-gray-600">未质检</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-slate-700">
+              {% if a and a.satisfaction_change %}
+                {{ a.satisfaction_change }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-slate-700">
+              {% if conv_tags %}
+                <div class="flex flex-wrap gap-1">
+                  {% for tag in conv_tags %}
+                    <span class="text-xs px-2 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700">{{ tag }}</span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              <a class="px-3 py-1 rounded-xl border bg-white text-xs" href="/conversations/{{ c.id }}">查看</a>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if convos|length == 0 %}
+          <tr class="border-t border-slate-100">
+            <td class="px-4 py-6 text-slate-500" colspan="8">暂无数据</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if total_pages > 1 %}
+    <div class="flex items-center justify-between mt-4 text-sm text-slate-600">
+      <div>
+        共 {{ total }} 条 · 每页 {{ page_size }} 条 · 第 {{ page }} / {{ total_pages }} 页
+      </div>
+      <div class="flex items-center gap-2">
+        {% if page > 1 %}
+          <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page - 1 }}{% else %}?page={{ page - 1 }}{% endif %}">上一页</a>
+        {% else %}
+          <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">上一页</span>
+        {% endif %}
+        {% if page < total_pages %}
+          <a class="px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50" href="/conversations{% if base_qs %}?{{ base_qs }}&page={{ page + 1 }}{% else %}?page={{ page + 1 }}{% endif %}">下一页</a>
+        {% else %}
+          <span class="px-3 py-1.5 rounded-xl border bg-slate-50 text-slate-400">下一页</span>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+<script>
+  (function () {
+    var USER_ID = {{ user.id }};
+    var stateKey = "conversations_filters_" + USER_ID;
+
+    // If user opens `/conversations` with no query, default to their last applied filters.
+    try {
+      if (!window.location.search) {
+        var saved = (localStorage.getItem(stateKey) || "").trim();
+        if (saved) {
+          window.location.replace("/conversations?" + saved);
+          return;
+        }
+      }
+    } catch (e) {}
+
+    function getBoxes(group, category, root) {
+      var selector = 'input[type="checkbox"][data-group="' + group + '"]';
+      if (category) {
+        selector += '[data-category="' + category + '"]';
+      }
+      return Array.prototype.slice.call((root || document).querySelectorAll(selector));
+    }
+
+    function setChecked(boxes, value) {
+      boxes.forEach(function (box) {
+        box.checked = value;
+      });
+    }
+
+    function invertChecked(boxes) {
+      boxes.forEach(function (box) {
+        box.checked = !box.checked;
+      });
+    }
+
+    function updateDropdownCount(dropdown) {
+      if (!dropdown) return;
+      var group = dropdown.getAttribute("data-dropdown-group");
+      if (!group) return;
+      var boxes = getBoxes(group, "", dropdown);
+      var count = boxes.reduce(function (acc, box) {
+        return acc + (box.checked ? 1 : 0);
+      }, 0);
+      var label = dropdown.querySelector("[data-dropdown-count]");
+      if (label) {
+        if (!boxes.length) {
+          label.textContent = "暂无";
+          return;
+        }
+        if (count === 0 || count === boxes.length) {
+          label.textContent = "全部";
+          return;
+        }
+        label.textContent = "已选 " + count;
+      }
+    }
+
+    function updateAllDropdownCounts() {
+      var dropdowns = document.querySelectorAll("[data-dropdown]");
+      dropdowns.forEach(function (dropdown) {
+        updateDropdownCount(dropdown);
+      });
+    }
+
+    function setDropdownOpen(dropdown, open) {
+      var panel = dropdown.querySelector("[data-dropdown-panel]");
+      var button = dropdown.querySelector("[data-dropdown-button]");
+      if (!panel || !button) return;
+      if (open) {
+        panel.classList.remove("hidden");
+        dropdown.setAttribute("data-open", "1");
+        button.setAttribute("aria-expanded", "true");
+      } else {
+        panel.classList.add("hidden");
+        dropdown.removeAttribute("data-open");
+        button.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    function closeAllDropdowns(except) {
+      var dropdowns = document.querySelectorAll("[data-dropdown][data-open]");
+      dropdowns.forEach(function (dropdown) {
+        if (except && dropdown === except) return;
+        setDropdownOpen(dropdown, false);
+      });
+    }
+
+    document.addEventListener("click", function (event) {
+      var toggle = event.target.closest("[data-dropdown-button]");
+      if (toggle) {
+        var dropdown = toggle.closest("[data-dropdown]");
+        if (!dropdown) return;
+        var isOpen = dropdown.getAttribute("data-open") === "1";
+        closeAllDropdowns(dropdown);
+        setDropdownOpen(dropdown, !isOpen);
+        return;
+      }
+      if (event.target.closest("[data-dropdown-panel]")) return;
+      closeAllDropdowns();
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") {
+        closeAllDropdowns();
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      var btn = event.target.closest("button[data-action][data-target]");
+      if (!btn) return;
+      event.preventDefault();
+      var group = btn.getAttribute("data-target");
+      var category = btn.getAttribute("data-category") || "";
+      var boxes = getBoxes(group, category);
+      if (!boxes.length) return;
+      var action = btn.getAttribute("data-action");
+      if (action === "select-all" || action === "select-category") {
+        setChecked(boxes, true);
+      }
+      if (action === "invert-all" || action === "invert-category") {
+        invertChecked(boxes);
+      }
+      var dropdown = btn.closest("[data-dropdown]");
+      if (dropdown) {
+        updateDropdownCount(dropdown);
+      } else {
+        updateAllDropdownCounts();
+      }
+    });
+
+    document.addEventListener("change", function (event) {
+      var target = event.target;
+      if (!target || target.type !== "checkbox" || !target.hasAttribute("data-group")) return;
+      var dropdown = target.closest("[data-dropdown]");
+      if (dropdown) {
+        updateDropdownCount(dropdown);
+      } else {
+        updateAllDropdownCounts();
+      }
+    });
+
+    function getISOWeek(date) {
+      var d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+      var dayNum = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+      var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    }
+
+    function getISOWeeksInYear(year) {
+      return getISOWeek(new Date(Date.UTC(year, 11, 28)));
+    }
+
+    function isoWeekToDate(year, week) {
+      var simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+      var dow = simple.getUTCDay() || 7;
+      if (dow <= 4) {
+        simple.setUTCDate(simple.getUTCDate() - dow + 1);
+      } else {
+        simple.setUTCDate(simple.getUTCDate() + 8 - dow);
+      }
+      return new Date(simple.getUTCFullYear(), simple.getUTCMonth(), simple.getUTCDate());
+    }
+
+    function initTimeSelectors() {
+      var yearSelect = document.getElementById("year-select");
+      var quarterSelect = document.getElementById("quarter-select");
+      var monthSelect = document.getElementById("month-select");
+
+      if (!yearSelect || !quarterSelect || !monthSelect) return;
+
+      var now = new Date();
+      var currentYear = now.getFullYear();
+      var startYear = currentYear - 10;
+      var endYear = currentYear + 1;
+
+      yearSelect.innerHTML = "";
+      for (var y = endYear; y >= startYear; y -= 1) {
+        var opt = document.createElement("option");
+        opt.value = String(y);
+        opt.textContent = String(y) + " 年";
+        yearSelect.appendChild(opt);
+      }
+
+      quarterSelect.innerHTML = "";
+      for (var q = 1; q <= 4; q += 1) {
+        var optQ = document.createElement("option");
+        optQ.value = String(q);
+        optQ.textContent = "Q" + q;
+        quarterSelect.appendChild(optQ);
+      }
+
+      monthSelect.innerHTML = "";
+      for (var m = 1; m <= 12; m += 1) {
+        var optM = document.createElement("option");
+        optM.value = String(m);
+        optM.textContent = m + " 月";
+        monthSelect.appendChild(optM);
+      }
+
+      updateWeekOptions();
+    }
+
+    function updateWeekOptions() {
+      var yearSelect = document.getElementById("year-select");
+      var weekSelect = document.getElementById("week-select");
+      if (!yearSelect || !weekSelect) return;
+
+      var year = Number(yearSelect.value || new Date().getFullYear());
+      var totalWeeks = getISOWeeksInYear(year);
+      var currentWeek = weekSelect.getAttribute("data-current-week") || "";
+
+      weekSelect.innerHTML = "";
+      for (var w = 1; w <= totalWeeks; w += 1) {
+        var opt = document.createElement("option");
+        opt.value = String(w);
+        opt.textContent = "第 " + w + " 周";
+        weekSelect.appendChild(opt);
+      }
+      if (currentWeek) {
+        weekSelect.value = currentWeek;
+      }
+    }
+
+    function syncTimeSelectorsFromState() {
+      var now = new Date();
+      var startVal = (document.getElementById("start-date") || {}).value || "";
+      var baseDate = startVal ? new Date(startVal) : now;
+
+      var year = String(baseDate.getFullYear());
+      var quarter = String(Math.floor(baseDate.getMonth() / 3) + 1);
+      var month = String(baseDate.getMonth() + 1);
+      var week = String(getISOWeek(baseDate));
+      var day = startVal || "";
+
+      var yearSelect = document.getElementById("year-select");
+      if (yearSelect && !Array.prototype.slice.call(yearSelect.options).some(function (o) { return o.value === year; })) {
+        var opt = document.createElement("option");
+        opt.value = year;
+        opt.textContent = year + " 年";
+        yearSelect.appendChild(opt);
+      }
+      if (yearSelect) yearSelect.value = year;
+      var weekSelect = document.getElementById("week-select");
+      if (weekSelect) weekSelect.setAttribute("data-current-week", week);
+      updateWeekOptions();
+
+      var quarterSelect = document.getElementById("quarter-select");
+      if (quarterSelect) quarterSelect.value = quarter;
+      var monthSelect = document.getElementById("month-select");
+      if (monthSelect) monthSelect.value = month;
+      if (weekSelect) weekSelect.value = week;
+      var daySelect = document.getElementById("day-select");
+      if (daySelect) daySelect.value = day;
+    }
+
+    function getLastFullPeriodSelection(mode) {
+      var today = new Date();
+      today.setHours(0, 0, 0, 0);
+      var yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+
+      if (mode === "yesterday") {
+        return {
+          year: String(yesterday.getFullYear()),
+          quarter: String(Math.floor(yesterday.getMonth() / 3) + 1),
+          month: String(yesterday.getMonth() + 1),
+          week: String(getISOWeek(yesterday)),
+          day: yesterday.toISOString().slice(0, 10),
+        };
+      }
+
+      if (mode === "last_week") {
+        var dayOfWeek = today.getDay() || 7;
+        var thisMonday = new Date(today);
+        thisMonday.setDate(today.getDate() - (dayOfWeek - 1));
+        var lastMonday = new Date(thisMonday);
+        lastMonday.setDate(thisMonday.getDate() - 7);
+        return {
+          year: String(lastMonday.getFullYear()),
+          week: String(getISOWeek(lastMonday)),
+          quarter: String(Math.floor(lastMonday.getMonth() / 3) + 1),
+          month: String(lastMonday.getMonth() + 1),
+          day: "",
+        };
+      }
+
+      if (mode === "last_month") {
+        var y = today.getFullYear();
+        var m = today.getMonth();
+        if (m === 0) {
+          m = 12;
+          y -= 1;
+        }
+        return {
+          year: String(y),
+          month: String(m),
+          quarter: String(Math.floor((m - 1) / 3) + 1),
+          week: "",
+          day: "",
+        };
+      }
+
+      if (mode === "last_quarter") {
+        var currentQuarter = Math.floor(today.getMonth() / 3) + 1;
+        var quarter = currentQuarter - 1;
+        var year = today.getFullYear();
+        if (quarter <= 0) {
+          quarter = 4;
+          year -= 1;
+        }
+        var month = (quarter - 1) * 3 + 1;
+        return {
+          year: String(year),
+          quarter: String(quarter),
+          month: String(month),
+          week: "",
+          day: "",
+        };
+      }
+
+      if (mode === "last_year") {
+        var year2 = today.getFullYear() - 1;
+        return {
+          year: String(year2),
+          quarter: "1",
+          month: "1",
+          week: "",
+          day: "",
+        };
+      }
+
+      return null;
+    }
+
+    function applyTimeModeUI() {
+      var modeEl = document.getElementById("time-mode");
+      if (!modeEl) return;
+      var mode = modeEl.value;
+
+      var yearWrap = document.getElementById("year-wrap");
+      var quarterWrap = document.getElementById("quarter-wrap");
+      var monthWrap = document.getElementById("month-wrap");
+      var weekWrap = document.getElementById("week-wrap");
+      var dayWrap = document.getElementById("day-wrap");
+      var customStartWrap = document.getElementById("custom-start-wrap");
+      var customEndWrap = document.getElementById("custom-end-wrap");
+
+      var hideAll = function () {
+        [yearWrap, quarterWrap, monthWrap, weekWrap, dayWrap, customStartWrap, customEndWrap].forEach(function (el) {
+          if (el) el.classList.add("hidden");
+        });
+      };
+
+      hideAll();
+
+      if (mode === "custom") {
+        if (customStartWrap) customStartWrap.classList.remove("hidden");
+        if (customEndWrap) customEndWrap.classList.remove("hidden");
+      } else if (mode === "all") {
+        // No selectors
+      } else if (mode === "last_year") {
+        if (yearWrap) yearWrap.classList.remove("hidden");
+      } else if (mode === "last_quarter") {
+        if (yearWrap) yearWrap.classList.remove("hidden");
+        if (quarterWrap) quarterWrap.classList.remove("hidden");
+      } else if (mode === "last_month") {
+        if (yearWrap) yearWrap.classList.remove("hidden");
+        if (monthWrap) monthWrap.classList.remove("hidden");
+      } else if (mode === "last_week") {
+        if (yearWrap) yearWrap.classList.remove("hidden");
+        if (weekWrap) weekWrap.classList.remove("hidden");
+      } else {
+        if (dayWrap) dayWrap.classList.remove("hidden");
+      }
+    }
+
+    function ensureDefaultTimeForMode(mode) {
+      if (mode === "all" || mode === "custom") return;
+      var selection = getLastFullPeriodSelection(mode);
+      if (!selection) return;
+
+      var yearSelect = document.getElementById("year-select");
+      if (yearSelect && selection.year) yearSelect.value = selection.year;
+      updateWeekOptions();
+
+      var quarterSelect = document.getElementById("quarter-select");
+      if (quarterSelect && selection.quarter) quarterSelect.value = selection.quarter;
+      var monthSelect = document.getElementById("month-select");
+      if (monthSelect && selection.month) monthSelect.value = selection.month;
+      var weekSelect = document.getElementById("week-select");
+      if (weekSelect && selection.week) weekSelect.value = selection.week;
+      var daySelect = document.getElementById("day-select");
+      if (daySelect && selection.day) daySelect.value = selection.day;
+    }
+
+    function setTimeAnchorsForSubmit(params) {
+      var mode = (document.getElementById("time-mode") || {}).value || "all";
+      if (mode === "all") return;
+
+      params.append("time_mode", mode);
+
+      if (mode === "custom") {
+        var s = (document.getElementById("start-date") || {}).value || "";
+        var e = (document.getElementById("end-date") || {}).value || "";
+        if (s) params.append("start", s);
+        if (e) params.append("end", e);
+        return;
+      }
+
+      var anchor = "";
+      if (mode === "last_year") {
+        var year = (document.getElementById("year-select") || {}).value || "";
+        if (year) anchor = year + "-01-01";
+      } else if (mode === "last_quarter") {
+        var year2 = (document.getElementById("year-select") || {}).value || "";
+        var quarter = (document.getElementById("quarter-select") || {}).value || "";
+        var month = (Number(quarter) - 1) * 3 + 1;
+        if (year2 && quarter) anchor = year2 + "-" + String(month).padStart(2, "0") + "-01";
+      } else if (mode === "last_month") {
+        var year3 = (document.getElementById("year-select") || {}).value || "";
+        var month2 = (document.getElementById("month-select") || {}).value || "";
+        if (year3 && month2) anchor = year3 + "-" + String(month2).padStart(2, "0") + "-01";
+      } else if (mode === "last_week") {
+        var year4 = (document.getElementById("year-select") || {}).value || "";
+        var week = (document.getElementById("week-select") || {}).value || "";
+        if (year4 && week) {
+          var anchorDate = isoWeekToDate(Number(year4), Number(week));
+          anchor = anchorDate.toISOString().slice(0, 10);
+        }
+      } else {
+        anchor = (document.getElementById("day-select") || {}).value || "";
+      }
+
+      if (anchor) {
+        params.append("start", anchor);
+        params.append("end", anchor);
+      }
+    }
+
+    function appendCheckboxGroup(params, name) {
+      var boxes = Array.prototype.slice.call(document.querySelectorAll('input[type="checkbox"][name="' + name + '"]'));
+      if (!boxes.length) return;
+      var checked = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+      if (checked.length === 0 || checked.length === boxes.length) return;
+      checked.forEach(function (v) { params.append(name, v); });
+    }
+
+    function buildFiltersQuery() {
+      var form = document.getElementById("conversations-filters");
+      var params = new URLSearchParams();
+      if (!form) return params;
+
+      setTimeAnchorsForSubmit(params);
+
+      var match = (form.querySelector('input[name="match"]') || {}).value || "";
+      if (match.trim()) params.append("match", match.trim());
+
+      var cid = (form.querySelector('input[name="cid"]') || {}).value || "";
+      if (String(cid).trim()) params.append("cid", String(cid).trim());
+
+      var minRounds = (form.querySelector('input[name="min_rounds"]') || {}).value || "";
+      if (String(minRounds).trim()) params.append("min_rounds", String(minRounds).trim());
+
+      var maxRounds = (form.querySelector('input[name="max_rounds"]') || {}).value || "";
+      if (String(maxRounds).trim()) params.append("max_rounds", String(maxRounds).trim());
+
+      var hasAnalysis = (form.querySelector('select[name="has_analysis"]') || {}).value || "";
+      if (hasAnalysis) params.append("has_analysis", hasAnalysis);
+
+      var onlyFlagged = form.querySelector('input[name="only_flagged"][type="checkbox"]');
+      if (onlyFlagged && onlyFlagged.checked) params.append("only_flagged", "1");
+
+      appendCheckboxGroup(params, "agent_id");
+      appendCheckboxGroup(params, "ext_agent_account");
+      appendCheckboxGroup(params, "reception_scenario");
+      appendCheckboxGroup(params, "satisfaction_change");
+      appendCheckboxGroup(params, "tag_id");
+
+      return params;
+    }
+
+    function saveCurrentFiltersFromUrl() {
+      try {
+        var p = new URLSearchParams(window.location.search);
+        p.delete("page");
+        var qs = p.toString();
+        if (!qs) {
+          localStorage.removeItem(stateKey);
+        } else {
+          localStorage.setItem(stateKey, qs);
+        }
+      } catch (e) {}
+    }
+
+    var clearBtn = document.getElementById("clear-filters");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", function () {
+        try { localStorage.removeItem(stateKey); } catch (e) {}
+        window.location.href = "/conversations";
+      });
+    }
+
+    var timeModeEl = document.getElementById("time-mode");
+    if (timeModeEl) {
+      initTimeSelectors();
+      syncTimeSelectorsFromState();
+      applyTimeModeUI();
+
+      timeModeEl.addEventListener("change", function () {
+        ensureDefaultTimeForMode(timeModeEl.value);
+        applyTimeModeUI();
+      });
+
+      var yearEl = document.getElementById("year-select");
+      if (yearEl) {
+        yearEl.addEventListener("change", function () {
+          updateWeekOptions();
+        });
+      }
+    }
+
+    var formEl = document.getElementById("conversations-filters");
+    if (formEl) {
+      formEl.addEventListener("submit", function (event) {
+        event.preventDefault();
+        var params = buildFiltersQuery();
+        var qs = params.toString();
+        try {
+          if (qs) localStorage.setItem(stateKey, qs);
+          else localStorage.removeItem(stateKey);
+        } catch (e) {}
+        window.location.href = "/conversations" + (qs ? ("?" + qs) : "");
+      });
+    }
+
+    saveCurrentFiltersFromUrl();
+    updateAllDropdownCounts();
+  })();
+</script>
 {% endblock %}

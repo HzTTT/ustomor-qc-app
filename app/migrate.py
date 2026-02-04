@@ -10,6 +10,7 @@ from db import engine
 # To avoid blocking every app boot, we record a one-time migration marker.
 MIGRATION_ID = "2026-01-30-ensure_schema-v7-qc"
 SETTINGS_COLUMNS_MIGRATION_ID = "2026-01-30-appconfig-settings-v2"
+REJECTED_TAG_RULES_MIGRATION_ID = "2026-02-03-rejected-tag-rules-v1"
 BACKFILL_ID = "2026-01-27-backfill-multi-agent-v1"
 USERTHREAD_BACKFILL_ID = "2026-01-28-backfill-user-thread-v1"
 
@@ -346,8 +347,76 @@ def ensure_schema() -> None:
             )
             _mark_applied(conn, MIGRATION_ID)
 
+    _apply_rejected_tag_rules(engine)
     # Separate migration for new AppConfig columns (runs even if v6 was already applied).
     _apply_appconfig_settings_columns(engine)
+
+
+def _apply_rejected_tag_rules(eng) -> None:
+    stmts = [
+        """
+        CREATE TABLE IF NOT EXISTS rejectedtagrule (
+            id SERIAL PRIMARY KEY,
+            category TEXT DEFAULT '',
+            tag_name TEXT DEFAULT '',
+            aliases TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            norm_key TEXT DEFAULT '',
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            created_by_user_id INTEGER REFERENCES "user"(id),
+            updated_by_user_id INTEGER REFERENCES "user"(id)
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS rejectedtagrule_norm_key_uniq ON rejectedtagrule (norm_key);",
+        "CREATE INDEX IF NOT EXISTS rejectedtagrule_active_idx ON rejectedtagrule (is_active);",
+        "CREATE INDEX IF NOT EXISTS rejectedtagrule_category_idx ON rejectedtagrule (category);",
+        "ALTER TABLE rejectedtagrule ALTER COLUMN is_active SET DEFAULT TRUE;",
+    ]
+    with eng.begin() as conn:
+        _ensure_migrations_table(conn)
+        if _already_applied(conn, REJECTED_TAG_RULES_MIGRATION_ID):
+            return
+        for s in stmts:
+            conn.execute(text(s))
+        conn.execute(text("UPDATE rejectedtagrule SET is_active = TRUE WHERE is_active IS NULL;"))
+        # Backfill from historical rejected suggestions (best-effort).
+        conn.execute(
+            text(
+                r"""
+                INSERT INTO rejectedtagrule (category, tag_name, notes, norm_key, is_active, created_at, updated_at)
+                SELECT DISTINCT ON (norm_key)
+                    suggested_category,
+                    suggested_tag_name,
+                    review_notes,
+                    norm_key,
+                    TRUE,
+                    NOW(),
+                    NOW()
+                FROM (
+                    SELECT
+                        suggested_category,
+                        suggested_tag_name,
+                        review_notes,
+                        lower(regexp_replace(
+                            coalesce(suggested_category, '') || '::' || coalesce(suggested_tag_name, ''),
+                            '\s+',
+                            '',
+                            'g'
+                        )) AS norm_key,
+                        reviewed_at
+                    FROM tagsuggestion
+                    WHERE status = 'rejected'
+                      AND (coalesce(suggested_category, '') <> '' OR coalesce(suggested_tag_name, '') <> '')
+                ) t
+                WHERE norm_key <> ''
+                ORDER BY norm_key, reviewed_at DESC NULLS LAST
+                ON CONFLICT (norm_key) DO NOTHING;
+                """
+            )
+        )
+        _mark_applied(conn, REJECTED_TAG_RULES_MIGRATION_ID)
 
 
 def _apply_appconfig_settings_columns(eng) -> None:

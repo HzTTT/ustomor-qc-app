@@ -25,9 +25,9 @@ else
     echo ""
 fi
 
-echo "启动 Docker 容器..."
+echo "启动 Docker 容器 (worker=4)..."
 echo "=========================================="
-docker compose up --build
+docker compose up --build --scale worker=4 -d
 
 # 如果启动失败，显示帮助信息
 if [ $? -ne 0 ]; then

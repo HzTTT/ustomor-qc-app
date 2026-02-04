@@ -69,7 +69,7 @@
                     <input type="hidden" name="agent_account" value="{{ r.agent_account }}" />
                     <div>
                       <label class="block text-xs text-slate-500 mb-1">登录用户名</label>
-                      <input name="username" placeholder="例如：taobao_001" class="w-full px-3 py-2 rounded-xl border" required />
+                      <input name="username" value="{{ r.agent_nick or '' }}" placeholder="例如：taobao_001" class="w-full px-3 py-2 rounded-xl border" required />
                     </div>
                     <div>
                       <label class="block text-xs text-slate-500 mb-1">显示名</label>

@@ -549,6 +549,23 @@ class TagSuggestion(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class RejectedTagRule(SQLModel, table=True):
+    """Admin-maintained rejected tag rules for blocking similar suggestions."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    category: str = Field(default="", index=True)
+    tag_name: str = Field(default="", index=True)
+    aliases: str = Field(default="", sa_column=Column(Text))
+    notes: str = Field(default="", sa_column=Column(Text))
+    norm_key: str = Field(default="", index=True, unique=True)
+    is_active: bool = Field(default=True, index=True)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    updated_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+
+
 class ManualTagBinding(SQLModel, table=True):
     """Admin/supervisor manually binds a tag to a conversation."""
 

@@ -83,7 +83,7 @@ def _run_auto_qc_check(session: Session, state_dict: dict, log_keep: int = 800) 
     """
     try:
         # 获取符合条件的对话（>5条消息且所有客服已绑定）
-        eligible = get_conversations_eligible_for_qc(session, min_messages=5, limit=50)
+        eligible = get_conversations_eligible_for_qc(session, min_messages=5, limit=None)
         
         if not eligible:
             state_dict = _append_log_state(

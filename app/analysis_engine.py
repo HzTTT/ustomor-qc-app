@@ -18,8 +18,10 @@ from models import (
     TagDefinition,
     ConversationTagHit,
     TagSuggestion,
+    RejectedTagRule,
 )
 from prompts import analysis_system_prompt, analysis_user_prompt, build_tag_catalog_for_prompt
+from tag_reject import normalize_text, parse_aliases
 
 
 def _tags_to_str(x: Any) -> str:
@@ -173,6 +175,13 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
     tags_by_cat: dict[int, list[TagDefinition]] = {}
     for t in tag_rows:
         tags_by_cat.setdefault(int(t.category_id), []).append(t)
+
+    cat_name_by_id = {int(c.id): c.name for c in categories if c.id is not None}
+    existing_tag_keys: set[tuple[str, str]] = set()
+    for t in tag_rows:
+        cname = cat_name_by_id.get(int(t.category_id))
+        if cname:
+            existing_tag_keys.add((normalize_text(cname), normalize_text(t.name)))
 
     catalog_payload: list[dict[str, Any]] = []
     for c in categories:
@@ -331,8 +340,27 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
 
     # Create TagSuggestion rows for new_tag_suggestions (manager review workflow)
     try:
+        rejected_rules = session.exec(
+            select(RejectedTagRule).where(RejectedTagRule.is_active == True)  # noqa: E712
+        ).all()
+        blocked_keys: set[tuple[str, str]] = set()
+        blocked_any_category_names: set[str] = set()
+        for r in rejected_rules:
+            cat_norm = normalize_text(r.category)
+            names = [r.tag_name] + parse_aliases(r.aliases or "")
+            for n in names:
+                n_norm = normalize_text(n)
+                if not n_norm:
+                    continue
+                if cat_norm:
+                    blocked_keys.add((cat_norm, n_norm))
+                else:
+                    blocked_any_category_names.add(n_norm)
+
         suggestions = parsed.get("new_tag_suggestions")
         if isinstance(suggestions, list) and analysis.id is not None:
+            seen_keys: set[tuple[str, str]] = set()
+            skipped: list[dict[str, str]] = []
             for s in suggestions:
                 if not isinstance(s, dict):
                     continue
@@ -340,6 +368,23 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
                 tname = str(s.get("tag_name") or "").strip()
                 if not cat and not tname:
                     continue
+                cat_norm = normalize_text(cat)
+                name_norm = normalize_text(tname)
+                if name_norm:
+                    key = (cat_norm, name_norm) if cat_norm else ("", name_norm)
+                    if key in seen_keys:
+                        skipped.append({"category": cat, "tag_name": tname, "reason": "duplicate_in_response"})
+                        continue
+                    seen_keys.add(key)
+                    if cat_norm and key in existing_tag_keys:
+                        skipped.append({"category": cat, "tag_name": tname, "reason": "already_exists"})
+                        continue
+                    if cat_norm and key in blocked_keys:
+                        skipped.append({"category": cat, "tag_name": tname, "reason": "blocked"})
+                        continue
+                    if name_norm in blocked_any_category_names:
+                        skipped.append({"category": cat, "tag_name": tname, "reason": "blocked_any_category"})
+                        continue
                 ts = TagSuggestion(
                     analysis_id=int(analysis.id),
                     conversation_id=int(conv.id),
@@ -352,6 +397,11 @@ async def analyze_conversation(session: Session, *, conversation_id: int, batch_
                 )
                 session.add(ts)
             session.commit()
+            if skipped:
+                analysis.extra = (analysis.extra or {})
+                analysis.extra["skipped_tag_suggestions"] = skipped
+                session.add(analysis)
+                session.commit()
     except Exception:
         pass
 
@@ -415,12 +465,16 @@ def claim_one_job(session: Session) -> AIAnalysisJob | None:
     except Exception:
         pass
 
-    job = session.exec(
+    base_stmt = (
         select(AIAnalysisJob)
         .where(AIAnalysisJob.status == "pending")
         .order_by(AIAnalysisJob.created_at.asc())
         .limit(1)
-    ).first()
+    )
+    try:
+        job = session.exec(base_stmt.with_for_update(skip_locked=True)).first()
+    except Exception:
+        job = session.exec(base_stmt).first()
     if not job:
         return None
 

@@ -209,6 +209,41 @@ def _extract_responses_output_text(data: dict[str, Any]) -> str:
                         out.append(t)
     return "\n".join(out).strip()
 
+def _messages_to_instructions_and_input(messages: list[dict[str, str]]) -> tuple[str, str]:
+    """Convert ChatCompletions-style messages into Responses-style (instructions + input_text).
+
+    - Merge all `system` messages into `instructions`
+    - Convert the rest into a simple transcript for `input_text`
+    """
+    instructions_parts: list[str] = []
+    transcript_parts: list[str] = []
+
+    for m in (messages or []):
+        if not isinstance(m, dict):
+            continue
+        role = (m.get("role") or "").strip().lower() or "user"
+        content = m.get("content")
+        if not isinstance(content, str):
+            content = "" if content is None else str(content)
+
+        if role == "system":
+            if content.strip():
+                instructions_parts.append(content.strip())
+            continue
+
+        label = "USER"
+        if role == "assistant":
+            label = "ASSISTANT"
+        elif role == "developer":
+            label = "DEVELOPER"
+        elif role == "tool":
+            label = "TOOL"
+        transcript_parts.append(f"{label}: {content}".rstrip())
+
+    instructions = "\n\n".join(instructions_parts).strip()
+    input_text = "\n\n".join(transcript_parts).strip()
+    return instructions, input_text
+
 
 async def responses_text(
     *,
@@ -225,8 +260,6 @@ async def responses_text(
     """Call OpenAI-compatible Responses API (/v1/responses).
 
     - `reasoning.effort` controls how much the model "thinks" before answering.
-    - If your relay doesn't expose /v1/responses, this function automatically falls back to /v1/chat/completions
-      (still passing reasoning_effort when possible).
     """
 
     s = get_ai_settings(session)
@@ -260,19 +293,12 @@ async def responses_text(
 
     r = await _call(preferred)
 
-    # If the endpoint itself is missing, fall back to chat completions.
+    # IMPORTANT: do NOT fall back to /chat/completions. Keep all upstream calls on /responses.
     if r.status_code in (404, 405) and "model" not in (r.text or "").lower():
-        return await chat_completion(
-            [
-                {"role": "system", "content": instructions or ""},
-                {"role": "user", "content": input_text},
-            ],
-            model=preferred,
-            reasoning_effort=eff,
-            retries=retries,
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-            session=session,
+        raise AIError(
+            "上游不支持 /v1/responses（或被禁用）。当前系统已禁用 /chat/completions 回退。\n"
+            f"- 请求地址: {url}\n"
+            "请检查：Relay 是否已支持并开启 Responses API，或切换到支持 /v1/responses 的上游。"
         )
 
     # Auto-fallback only for model_not_found
@@ -320,74 +346,22 @@ async def chat_completion(
     idempotency_key: str | None = None,
     session: Session | None = None,
 ) -> str:
-    """Compatibility client for /v1/chat/completions with a smart fallback on model_not_found."""
+    """Compatibility wrapper for legacy callsites.
 
-    s = get_ai_settings(session)
-    if not s["api_key"]:
-        raise AIError("OPENAI_API_KEY 未配置")
+    This project now routes all upstream calls through /v1/responses.
+    NOTE: `temperature` is ignored in Responses mode.
+    """
 
-    url = f"{s['base_url']}/chat/completions"
-    headers = {"Authorization": f"Bearer {s['api_key']}"}
+    _ = temperature  # ignored (Responses API)
 
-    preferred = (model or s["model"] or "").strip() or "gpt-5.2"
-    eff = (reasoning_effort or "").strip().lower()
-
-    async def _call(chosen_model: str) -> httpx.Response:
-        payload: dict[str, Any] = {
-            "model": chosen_model,
-            "messages": messages,
-        }
-
-        # GPT-5.2 Chat Completions uses `reasoning_effort` (not `reasoning`).
-        if eff:
-            payload["reasoning_effort"] = eff
-
-        # GPT-5.1/5.2: when reasoning_effort != none, sampling params like temperature are not supported.
-        # We only send temperature when it's safe.
-        if (not eff) or eff == "none" or (not str(chosen_model).startswith("gpt-5")):
-            payload["temperature"] = temperature
-
-        return await _post_with_retries(
-            url=url,
-            headers=headers,
-            payload=payload,
-            timeout_s=float(s["timeout_s"]),
-            retries=int(s.get("retries") or 0) if retries is None else int(retries),
-            request_id=request_id,
-            idempotency_key=idempotency_key,
-        )
-
-    r = await _call(preferred)
-
-    # Auto-fallback only for model_not_found
-    if r.status_code == 404 and "model" in (r.text or "").lower():
-        fallback = _pick_fallback(preferred, session)
-        if fallback and fallback != preferred:
-            r2 = await _call(fallback)
-            if r2.status_code < 400:
-                data = r2.json()
-                try:
-                    return data["choices"][0]["message"]["content"]
-                except Exception:
-                    raise AIError(f"AI返回格式异常: {str(data)[:500]}")
-            raise AIError(
-                "AI请求失败(404): 模型不可用。\n"
-                f"- 首选模型: {preferred}\n"
-                f"- 回退模型: {fallback}\n"
-                f"- 回退报错: {r2.text[:500]}"
-            )
-
-    if r.status_code >= 400:
-        hint = ""
-        if r.status_code == 404 and "model" in (r.text or "").lower():
-            ids = await list_model_ids_async(session=session)
-            if ids:
-                hint = "\n可用模型示例：" + ", ".join(ids[:12]) + ("..." if len(ids) > 12 else "")
-            hint += "\n建议：把 OPENAI_MODEL / 每日总结里的模型改成你 relay 支持的模型 ID。"
-        raise AIError(f"AI请求失败({r.status_code}): {r.text[:500]}{hint}")
-
-    data = r.json()
-    try:
-        return data["choices"][0]["message"]["content"]
-    except Exception:
-        raise AIError(f"AI返回格式异常: {str(data)[:500]}")
+    instructions, input_text = _messages_to_instructions_and_input(messages)
+    return await responses_text(
+        input_text=input_text or "",
+        instructions=instructions or None,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        retries=retries,
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        session=session,
+    )

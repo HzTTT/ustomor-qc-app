@@ -3,7 +3,7 @@
 <div class="flex items-start justify-between gap-4 mb-4">
   <div>
     <h1 class="text-2xl font-semibold">标签报表</h1>
-    <div class="text-sm text-slate-500 mt-1">统计口径：每个对话取“最新一条 AI质检”里的命中标签。</div>
+    <div class="text-sm text-slate-500 mt-1">统计口径：每个对话只取最新一条 AI质检里的命中标签。</div>
   </div>
   {% if user.role in ["admin", "supervisor"] %}
     <a href="/settings/tags" class="px-3 py-2 rounded-xl bg-white border text-sm hover:bg-slate-50">去标签管理</a>
@@ -14,127 +14,145 @@
   <div class="mb-4 p-3 rounded-xl border bg-slate-900 text-white text-sm">{{ flash }}</div>
 {% endif %}
 
-<div class="bg-white border rounded-2xl p-4">
-  <form method="get" action="/reports/tags" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-    <div>
+<div class="relative">
+  <div id="pivot-sidebar" class="bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:fixed lg:left-6 lg:top-24 lg:w-64">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="font-medium">行标签</div>
+        <div class="text-xs text-slate-500 mt-1">拖拽调整层级与顺序。标签分类/标签会自动跟随。</div>
+      </div>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-2 items-center">
+      <button id="expand-all" type="button" class="px-3 py-1.5 rounded-lg border text-xs">展开全部</button>
+      <button id="collapse-all" type="button" class="px-3 py-1.5 rounded-lg border text-xs">折叠全部</button>
+      <select id="level-select" class="border rounded-lg px-2 py-1 text-xs w-full"></select>
+      <button id="expand-level" type="button" class="px-3 py-1.5 rounded-lg border text-xs">展开该层</button>
+      <button id="collapse-level" type="button" class="px-3 py-1.5 rounded-lg border text-xs">折叠该层</button>
+    </div>
+    <div class="mt-4">
+      <div class="text-xs text-slate-500 mb-1">选中行标签</div>
+      <div id="row-fields" class="min-h-[52px] flex flex-wrap gap-2 p-2 border rounded-xl bg-slate-50" data-list="active"></div>
+    </div>
+    <div class="mt-3">
+      <div class="text-xs text-slate-500 mb-1">可选字段</div>
+      <div id="available-fields" class="min-h-[52px] flex flex-wrap gap-2 p-2 border rounded-xl bg-slate-50" data-list="available"></div>
+    </div>
+    <div class="mt-3 text-xs text-slate-500">标签一级分类与标签默认附加在每个层级下显示。</div>
+  </div>
+
+  <div class="lg:pl-72">
+    <div class="bg-white border rounded-2xl p-4" id="pivot-filter-card">
+  <form id="pivot-filters" class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end" onsubmit="return false;">
+    <div class="md:col-span-2">
       <label class="block text-xs text-slate-500 mb-1">时间维度</label>
-      <select name="time_mode" class="w-full border rounded-xl px-3 py-2 text-sm">
+      <select id="time-mode" class="w-full border rounded-xl px-3 py-2 text-sm">
         {% for k, label in time_modes %}
           <option value="{{ k }}" {% if k == filters.time_mode %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
     </div>
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">日期/起始</label>
-      <input type="date" name="start" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    <div id="year-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">年份</label>
+      <select id="year-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
     </div>
-    <div>
+    <div id="quarter-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">季度</label>
+      <select id="quarter-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+    </div>
+    <div id="month-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">月份</label>
+      <select id="month-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+    </div>
+    <div id="week-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">周次</label>
+      <select id="week-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+    </div>
+    <div id="day-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">日期</label>
+      <input type="date" id="day-select" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div id="custom-start-wrap" class="md:col-span-2">
+      <label class="block text-xs text-slate-500 mb-1">起始</label>
+      <input type="date" id="start-date" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+    </div>
+    <div id="custom-end-wrap" class="md:col-span-2">
       <label class="block text-xs text-slate-500 mb-1">结束</label>
-      <input type="date" name="end" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+      <input type="date" id="end-date" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
     </div>
-    <div>
+    <div class="md:col-span-3">
       <label class="block text-xs text-slate-500 mb-1">平台</label>
-      <select name="platform" class="w-full border rounded-xl px-3 py-2 text-sm">
+      <select id="platform-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
         <option value="">全部</option>
         {% for p in platform_options %}
           <option value="{{ p }}" {% if p == filters.platform %}selected{% endif %}>{{ p }}</option>
         {% endfor %}
       </select>
     </div>
-    <div>
+    <div class="md:col-span-3">
       <label class="block text-xs text-slate-500 mb-1">站内客服</label>
-      <select name="agent_user_id" class="w-full border rounded-xl px-3 py-2 text-sm">
+      <select id="agent-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
         <option value="">全部</option>
         {% for u in agent_options %}
           <option value="{{ u.id }}" {% if (filters.agent_user_id|string) == (u.id|string) %}selected{% endif %}>{{ u.label }}</option>
         {% endfor %}
       </select>
     </div>
-    <div class="flex items-end gap-2">
-      <label class="text-sm"><input type="checkbox" name="yoy" value="1" {% if filters.yoy %}checked{% endif %} /> 同比</label>
-      <button class="flex-1 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">刷新</button>
+    <div class="md:col-span-3">
+      <label class="block text-xs text-slate-500 mb-1">接待场景</label>
+      <select id="scenario-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="">全部</option>
+        <option value="售前">售前</option>
+        <option value="售后">售后</option>
+        <option value="售前和售后">售前和售后</option>
+        <option value="其他接待场景">其他接待场景</option>
+        <option value="无法判定">无法判定</option>
+        <option value="未知">未知</option>
+      </select>
+    </div>
+    <div class="md:col-span-3">
+      <label class="block text-xs text-slate-500 mb-1">满意度变化</label>
+      <select id="satisfaction-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
+        <option value="">全部</option>
+        <option value="大幅减少">大幅减少</option>
+        <option value="小幅减少">小幅减少</option>
+        <option value="无显著变化">无显著变化</option>
+        <option value="小幅增加">小幅增加</option>
+        <option value="大幅增加">大幅增加</option>
+        <option value="无法判定">无法判定</option>
+        <option value="未知">未知</option>
+      </select>
     </div>
   </form>
-
-  <div class="mt-4 text-xs text-slate-500">
-    当前周期：{{ period.current_label }}{% if period.prev_label %}（环比：{{ period.prev_label }}）{% endif %}{% if period.yoy_label %}（同比：{{ period.yoy_label }}）{% endif %}
+  <div class="mt-3 flex flex-wrap items-center gap-2">
+    <button id="toggle-mom" type="button" class="px-3 py-1.5 rounded-lg border text-sm">环比</button>
+    <button id="toggle-yoy" type="button" class="px-3 py-1.5 rounded-lg border text-sm">同比</button>
+    <button id="manual-refresh" type="button" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">刷新</button>
+    <div id="period-label" class="text-xs text-slate-500"></div>
   </div>
-</div>
-
-<div class="mt-4 bg-white border rounded-2xl p-4">
-  {% if table_rows|length == 0 %}
-    <div class="text-sm text-slate-500">暂无数据（可能是还没有AI命中标签，或筛选条件过窄）</div>
-  {% else %}
-    <div class="overflow-x-auto">
-      <table class="min-w-full text-sm">
-        <thead>
-          <tr class="text-left border-b">
-            <th class="py-2 pr-4">维度</th>
-            <th class="py-2 pr-4">一级分类</th>
-            <th class="py-2 pr-4">二级标签</th>
-            <th class="py-2 pr-4">对话数</th>
-            <th class="py-2 pr-4">标签占比</th>
-            <th class="py-2 pr-4">环比</th>
-            <th class="py-2 pr-4">同比</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in table_rows %}
-            <tr class="border-b {% if r.is_header %}bg-slate-50{% endif %} {% if r.level > 0 or not r.is_header %}hidden{% endif %}" 
-                data-row-id="{{ r.group_id }}-{% if r.is_header %}header{% else %}{{ loop.index }}{% endif %}"
-                data-level="{{ r.level }}"
-                data-parent="{{ r.parent_id }}"
-                data-group="{{ r.group_id }}"
-                data-is-header="{{ r.is_header }}">
-              <td class="py-2 pr-4">
-                {% if r.is_header %}
-                  <button type="button" class="text-left font-semibold" onclick="toggleGroup('{{ r.group_id }}')" style="padding-left: {{ r.level * 20 }}px;">
-                    <span id="ico-{{ r.group_id }}">▸</span> {{ r.group_label }}
-                  </button>
-                {% else %}
-                  <div style="padding-left: {{ r.level * 20 + 20 }}px;">{{ r.group_label }}</div>
-                {% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}<span class="text-slate-400">—</span>{% else %}{{ r.category_name }}{% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}
-                  <span class="text-slate-400">—</span>
-                {% else %}
-                  <button type="button" class="underline" data-rule-title="{{ r.tag_name }}" data-rule-text="{{ r.tag_standard }}" onclick="showRule(this)">{{ r.tag_name }}</button>
-                {% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}
-                  <span class="font-semibold">{{ r.current_sum }}</span>
-                {% else %}
-                  <button type="button" 
-                          class="underline text-blue-600 hover:text-blue-800" 
-                          data-tag-id="{{ r.tag_id }}"
-                          data-platform="{{ r.platform }}"
-                          data-agent-user-id="{{ r.agent_user_id }}"
-                          onclick="showTagCids(this)"
-                          {% if r.current == 0 %}disabled class="text-slate-400 no-underline cursor-default"{% endif %}>
-                    {{ r.current }}
-                  </button>
-                {% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}{{ r.ratio_sum }}{% else %}{{ r.ratio }}{% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}{{ r.mom_sum }}{% else %}{{ r.mom }}{% endif %}
-              </td>
-              <td class="py-2 pr-4">
-                {% if r.is_header %}{{ r.yoy_sum }}{% else %}{{ r.yoy }}{% endif %}
-              </td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
     </div>
-  {% endif %}
+
+    <div class="mt-4 bg-white border rounded-2xl p-4">
+      <div id="pivot-loading" class="text-sm text-slate-500">加载中...</div>
+      <div id="pivot-empty" class="text-sm text-slate-500 hidden">暂无数据（可能是还没有AI命中标签，或筛选条件过窄）</div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm" id="pivot-table">
+          <thead>
+            <tr class="text-left border-b">
+              <th class="py-2 pr-4">维度</th>
+              <th class="py-2 pr-4">标签命中数</th>
+              <th class="py-2 pr-4 col-mom">数量环比</th>
+              <th class="py-2 pr-4 col-yoy">数量同比</th>
+              <th class="py-2 pr-4">标签占比</th>
+              <th class="py-2 pr-4 col-mom">占比环比</th>
+              <th class="py-2 pr-4 col-yoy">占比同比</th>
+              <th class="py-2 pr-4">质检对话数</th>
+            </tr>
+          </thead>
+          <tbody id="pivot-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Rule popup -->
@@ -167,142 +185,1176 @@
 </div>
 
 <script>
-  const filterParams = {
-    start: '{{ filters.start }}',
-    end: '{{ filters.end }}',
-    platform: '{{ filters.platform }}',
-    agent_user_id: '{{ filters.agent_user_id }}'
+  const USER_ID = {{ user.id }};
+  const TAG_META = {{ tag_meta | tojson }};
+  const CATEGORY_META = {{ category_meta | tojson }};
+  const USER_META = {{ user_meta | tojson }};
+
+  const scenarioOrder = ["售前", "售后", "售前和售后", "其他接待场景", "无法判定", "未知"];
+  const satisfactionOrder = ["大幅减少", "小幅减少", "无显著变化", "小幅增加", "大幅增加", "无法判定", "未知"];
+
+  const FIELD_DEFS = [
+    { id: "platform", label: "平台" },
+    { id: "agent", label: "客服" },
+    { id: "scenario", label: "接待场景" },
+    { id: "satisfaction", label: "满意度变化" },
+  ];
+  const BASE_FIELDS = ["tag_category", "tag"];
+
+  const DEFAULT_STATE = {
+    time_mode: "{{ filters.time_mode }}",
+    start: "{{ filters.start }}",
+    end: "{{ filters.end }}",
+    platform: "{{ filters.platform }}",
+    agent_user_id: "{{ filters.agent_user_id }}",
+    reception_scenario: "",
+    satisfaction_change: "",
+    show_mom: true,
+    show_yoy: {{ "true" if filters.yoy else "false" }},
+    row_fields: ["platform"],
+    year: "",
+    quarter: "1",
+    month: "1",
+    week: "1",
+    day: "",
   };
 
-  function toggleGroup(groupId) {
-    const ico = document.getElementById('ico-' + groupId);
-    const isExpanded = ico && ico.textContent === '▾';
-    
-    if (isExpanded) {
-      // 折叠：隐藏当前组的明细行和所有子元素
-      // 1. 隐藏当前组的明细行（data-group 相同且非 header）
-      const detailRows = document.querySelectorAll('[data-group="' + groupId + '"][data-is-header="False"]');
-      detailRows.forEach(row => row.classList.add('hidden'));
-      
-      // 2. 隐藏所有子 header 和它们的后代
-      const allChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
-      allChildren.forEach(child => {
-        child.classList.add('hidden');
-        const childGroupId = child.getAttribute('data-group');
-        const childIco = document.getElementById('ico-' + childGroupId);
-        if (childIco) {
-          childIco.textContent = '▸';
-        }
-        // 递归隐藏所有后代
-        hideAllDescendants(childGroupId);
-      });
-      
-      if (ico) ico.textContent = '▸';
+  const stateKey = `tag_report_pivot_config_${USER_ID}`;
+  let state = { ...DEFAULT_STATE };
+  let pivotData = null;
+  let refreshTimer = null;
+
+  const tagById = new Map(TAG_META.map(t => [t.id, t]));
+  const categoryById = new Map(CATEGORY_META.map(c => [c.id, c]));
+  const userById = new Map(USER_META.map(u => [u.id, u]));
+
+  const categoryOrderMap = new Map(
+    CATEGORY_META
+      .slice()
+      .sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
+      .map((c, idx) => [String(c.id), idx])
+  );
+
+  const tagOrderMap = new Map(
+    TAG_META
+      .slice()
+      .sort((a, b) => {
+        const ac = categoryOrderMap.get(String(a.category_id)) ?? 9999;
+        const bc = categoryOrderMap.get(String(b.category_id)) ?? 9999;
+        if (ac !== bc) return ac - bc;
+        if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+        return a.id - b.id;
+      })
+      .map((t, idx) => [String(t.id), idx])
+  );
+
+  function sanitizeRowFields(fields) {
+    const allowed = new Set(FIELD_DEFS.map(f => f.id));
+    const cleaned = Array.isArray(fields) ? fields.filter(f => allowed.has(f)) : [];
+    return cleaned.length ? cleaned : DEFAULT_STATE.row_fields.slice();
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(stateKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === "object") {
+        state = { ...state, ...saved };
+        state.row_fields = sanitizeRowFields(state.row_fields);
+      }
+    } catch (e) {}
+  }
+
+  function saveState() {
+    try {
+      localStorage.setItem(stateKey, JSON.stringify(state));
+    } catch (e) {}
+  }
+
+  function setState(next) {
+    state = { ...state, ...next };
+    state.row_fields = sanitizeRowFields(state.row_fields);
+    saveState();
+  }
+
+  function getISOWeek(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  }
+
+  function getISOWeeksInYear(year) {
+    return getISOWeek(new Date(Date.UTC(year, 11, 28)));
+  }
+
+  function isoWeekToDate(year, week) {
+    const simple = new Date(Date.UTC(year, 0, 1 + (week - 1) * 7));
+    const dow = simple.getUTCDay() || 7;
+    if (dow <= 4) {
+      simple.setUTCDate(simple.getUTCDate() - dow + 1);
     } else {
-      // 展开：显示当前组的明细行和直接子 header
-      // 1. 显示当前组的明细行
-      const detailRows = document.querySelectorAll('[data-group="' + groupId + '"][data-is-header="False"]');
-      detailRows.forEach(row => row.classList.remove('hidden'));
-      
-      // 2. 显示直接子 header（但不展开它们）
-      const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"][data-is-header="True"]');
-      directChildren.forEach(child => child.classList.remove('hidden'));
-      
-      if (ico) ico.textContent = '▾';
+      simple.setUTCDate(simple.getUTCDate() + 8 - dow);
+    }
+    return new Date(simple.getUTCFullYear(), simple.getUTCMonth(), simple.getUTCDate());
+  }
+
+  function initTimeSelectors() {
+    const yearSelect = document.getElementById("year-select");
+    const quarterSelect = document.getElementById("quarter-select");
+    const monthSelect = document.getElementById("month-select");
+    const weekSelect = document.getElementById("week-select");
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const startYear = currentYear - 10;
+    const endYear = currentYear + 1;
+
+    yearSelect.innerHTML = "";
+    for (let y = endYear; y >= startYear; y -= 1) {
+      const opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = `${y} 年`;
+      yearSelect.appendChild(opt);
+    }
+
+    quarterSelect.innerHTML = "";
+    for (let q = 1; q <= 4; q += 1) {
+      const opt = document.createElement("option");
+      opt.value = String(q);
+      opt.textContent = `Q${q}`;
+      quarterSelect.appendChild(opt);
+    }
+
+    monthSelect.innerHTML = "";
+    for (let m = 1; m <= 12; m += 1) {
+      const opt = document.createElement("option");
+      opt.value = String(m);
+      opt.textContent = `${m} 月`;
+      monthSelect.appendChild(opt);
+    }
+
+    updateWeekOptions();
+  }
+
+  function updateWeekOptions() {
+    const yearSelect = document.getElementById("year-select");
+    const weekSelect = document.getElementById("week-select");
+    const year = Number(yearSelect.value || new Date().getFullYear());
+    const totalWeeks = getISOWeeksInYear(year);
+    const currentWeek = state.week || "";
+    weekSelect.innerHTML = "";
+    for (let w = 1; w <= totalWeeks; w += 1) {
+      const opt = document.createElement("option");
+      opt.value = String(w);
+      opt.textContent = `第 ${w} 周`;
+      weekSelect.appendChild(opt);
+    }
+    if (currentWeek) {
+      weekSelect.value = currentWeek;
     }
   }
-  
+
+  function syncTimeSelectorsFromState() {
+    const now = new Date();
+    const startDate = state.start ? new Date(state.start) : now;
+    const year = state.year || String(startDate.getFullYear());
+    const quarter = state.quarter || String(Math.floor(startDate.getMonth() / 3) + 1);
+    const month = state.month || String(startDate.getMonth() + 1);
+    const week = state.week || String(getISOWeek(startDate));
+    const day = state.day || (state.start || "");
+
+    const yearSelect = document.getElementById("year-select");
+    if (!Array.from(yearSelect.options).some(opt => opt.value === year)) {
+      const opt = document.createElement("option");
+      opt.value = year;
+      opt.textContent = `${year} 年`;
+      yearSelect.appendChild(opt);
+    }
+    yearSelect.value = year;
+    updateWeekOptions();
+    document.getElementById("quarter-select").value = quarter;
+    document.getElementById("month-select").value = month;
+    document.getElementById("week-select").value = week;
+    document.getElementById("day-select").value = day;
+
+    setState({ year, quarter, month, week, day });
+  }
+
+  function getLastFullPeriodSelection(mode) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    if (mode === "yesterday") {
+      return {
+        year: String(yesterday.getFullYear()),
+        quarter: String(Math.floor(yesterday.getMonth() / 3) + 1),
+        month: String(yesterday.getMonth() + 1),
+        week: String(getISOWeek(yesterday)),
+        day: yesterday.toISOString().slice(0, 10),
+      };
+    }
+
+    if (mode === "last_week") {
+      const dayOfWeek = today.getDay() || 7;
+      const thisMonday = new Date(today);
+      thisMonday.setDate(today.getDate() - (dayOfWeek - 1));
+      const lastMonday = new Date(thisMonday);
+      lastMonday.setDate(thisMonday.getDate() - 7);
+      return {
+        year: String(lastMonday.getFullYear()),
+        week: String(getISOWeek(lastMonday)),
+        quarter: String(Math.floor(lastMonday.getMonth() / 3) + 1),
+        month: String(lastMonday.getMonth() + 1),
+        day: "",
+      };
+    }
+
+    if (mode === "last_month") {
+      let year = today.getFullYear();
+      let month = today.getMonth();
+      if (month === 0) {
+        month = 12;
+        year -= 1;
+      }
+      return {
+        year: String(year),
+        month: String(month),
+        quarter: String(Math.floor((month - 1) / 3) + 1),
+        week: "",
+        day: "",
+      };
+    }
+
+    if (mode === "last_quarter") {
+      const currentQuarter = Math.floor(today.getMonth() / 3) + 1;
+      let quarter = currentQuarter - 1;
+      let year = today.getFullYear();
+      if (quarter <= 0) {
+        quarter = 4;
+        year -= 1;
+      }
+      const month = (quarter - 1) * 3 + 1;
+      return {
+        year: String(year),
+        quarter: String(quarter),
+        month: String(month),
+        week: "",
+        day: "",
+      };
+    }
+
+    if (mode === "last_year") {
+      const year = today.getFullYear() - 1;
+      return {
+        year: String(year),
+        quarter: "1",
+        month: "1",
+        week: "",
+        day: "",
+      };
+    }
+
+    return null;
+  }
+
+  function ensureDefaultTimeForMode(mode, force) {
+    if (!force && state.time_initialized) return;
+    if (mode === "all" || mode === "custom") {
+      setState({ time_initialized: true });
+      return;
+    }
+    const selection = getLastFullPeriodSelection(mode);
+    if (!selection) return;
+    setState({ ...selection, time_initialized: true });
+    syncTimeSelectorsFromState();
+  }
+
+  function applyStateToFilters() {
+    document.getElementById("time-mode").value = state.time_mode || DEFAULT_STATE.time_mode;
+    document.getElementById("start-date").value = state.start || "";
+    document.getElementById("end-date").value = state.end || "";
+    document.getElementById("platform-filter").value = state.platform || "";
+    document.getElementById("agent-filter").value = state.agent_user_id || "";
+    document.getElementById("scenario-filter").value = state.reception_scenario || "";
+    document.getElementById("satisfaction-filter").value = state.satisfaction_change || "";
+    initTimeSelectors();
+    ensureDefaultTimeForMode(document.getElementById("time-mode").value, false);
+    syncTimeSelectorsFromState();
+    updateToggleButtons();
+    applyTimeModeUI();
+  }
+
+  function applyTimeModeUI() {
+    const mode = document.getElementById("time-mode").value;
+    const yearWrap = document.getElementById("year-wrap");
+    const quarterWrap = document.getElementById("quarter-wrap");
+    const monthWrap = document.getElementById("month-wrap");
+    const weekWrap = document.getElementById("week-wrap");
+    const dayWrap = document.getElementById("day-wrap");
+    const customStartWrap = document.getElementById("custom-start-wrap");
+    const customEndWrap = document.getElementById("custom-end-wrap");
+
+    const hideAll = () => {
+      yearWrap.classList.add("hidden");
+      quarterWrap.classList.add("hidden");
+      monthWrap.classList.add("hidden");
+      weekWrap.classList.add("hidden");
+      dayWrap.classList.add("hidden");
+      customStartWrap.classList.add("hidden");
+      customEndWrap.classList.add("hidden");
+    };
+
+    hideAll();
+
+    if (mode === "custom") {
+      customStartWrap.classList.remove("hidden");
+      customEndWrap.classList.remove("hidden");
+    } else if (mode === "all") {
+      // No date selectors
+    } else if (mode === "last_year") {
+      yearWrap.classList.remove("hidden");
+    } else if (mode === "last_quarter") {
+      yearWrap.classList.remove("hidden");
+      quarterWrap.classList.remove("hidden");
+    } else if (mode === "last_month") {
+      yearWrap.classList.remove("hidden");
+      monthWrap.classList.remove("hidden");
+    } else if (mode === "last_week") {
+      yearWrap.classList.remove("hidden");
+      weekWrap.classList.remove("hidden");
+    } else {
+      dayWrap.classList.remove("hidden");
+    }
+  }
+
+  function updateToggleButtons() {
+    const momBtn = document.getElementById("toggle-mom");
+    const yoyBtn = document.getElementById("toggle-yoy");
+    momBtn.className = state.show_mom ? "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm" : "px-3 py-1.5 rounded-lg border text-sm";
+    yoyBtn.className = state.show_yoy ? "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm" : "px-3 py-1.5 rounded-lg border text-sm";
+    updateColumnVisibility();
+  }
+
+  function updateColumnVisibility() {
+    document.querySelectorAll(".col-mom").forEach(el => {
+      if (state.show_mom) {
+        el.classList.remove("hidden");
+      } else {
+        el.classList.add("hidden");
+      }
+    });
+    document.querySelectorAll(".col-yoy").forEach(el => {
+      if (state.show_yoy) {
+        el.classList.remove("hidden");
+      } else {
+        el.classList.add("hidden");
+      }
+    });
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshReport, 150);
+  }
+
+  async function refreshReport() {
+    document.getElementById("pivot-loading").classList.remove("hidden");
+    document.getElementById("pivot-empty").classList.add("hidden");
+
+    const params = new URLSearchParams();
+    params.append("time_mode", document.getElementById("time-mode").value);
+    const mode = document.getElementById("time-mode").value;
+
+    if (mode === "custom") {
+      const start = document.getElementById("start-date").value;
+      const end = document.getElementById("end-date").value;
+      if (start) params.append("start", start);
+      if (end) params.append("end", end);
+      setState({ start, end });
+    } else if (mode !== "all") {
+      let anchor = "";
+      if (mode === "last_year") {
+        const year = document.getElementById("year-select").value;
+        anchor = `${year}-01-01`;
+        setState({ year });
+      } else if (mode === "last_quarter") {
+        const year = document.getElementById("year-select").value;
+        const quarter = document.getElementById("quarter-select").value;
+        const month = (Number(quarter) - 1) * 3 + 1;
+        anchor = `${year}-${String(month).padStart(2, "0")}-01`;
+        setState({ year, quarter });
+      } else if (mode === "last_month") {
+        const year = document.getElementById("year-select").value;
+        const month = document.getElementById("month-select").value;
+        anchor = `${year}-${String(month).padStart(2, "0")}-01`;
+        setState({ year, month });
+      } else if (mode === "last_week") {
+        const year = document.getElementById("year-select").value;
+        const week = document.getElementById("week-select").value;
+        const anchorDate = isoWeekToDate(Number(year), Number(week));
+        anchor = anchorDate.toISOString().slice(0, 10);
+        setState({ year, week });
+      } else {
+        const day = document.getElementById("day-select").value;
+        anchor = day;
+        setState({ day });
+      }
+
+      if (anchor) {
+        params.append("start", anchor);
+        params.append("end", anchor);
+        setState({ start: anchor, end: anchor });
+      }
+    }
+
+    const platform = document.getElementById("platform-filter").value;
+    const agentUserId = document.getElementById("agent-filter").value;
+    const scenario = document.getElementById("scenario-filter").value;
+    const satisfaction = document.getElementById("satisfaction-filter").value;
+
+    if (platform) params.append("platform", platform);
+    if (agentUserId) params.append("agent_user_id", agentUserId);
+    if (scenario) params.append("reception_scenario", scenario);
+    if (satisfaction) params.append("satisfaction_change", satisfaction);
+
+    if (state.show_yoy) {
+      params.append("yoy", "1");
+    }
+
+    setState({
+      time_mode: mode,
+      platform: platform,
+      agent_user_id: agentUserId,
+      reception_scenario: scenario,
+      satisfaction_change: satisfaction,
+    });
+
+    try {
+      const resp = await fetch(`/api/reports/tags/pivot-data?${params.toString()}`);
+      const data = await resp.json();
+      pivotData = data;
+
+      if (data.range) {
+        const startInput = document.getElementById("start-date");
+        const endInput = document.getElementById("end-date");
+        startInput.value = data.range.current_start || "";
+        endInput.value = data.range.current_end || "";
+        setState({ start: startInput.value, end: endInput.value });
+      }
+
+      renderPeriodLabel();
+      renderPivot();
+    } catch (e) {
+      document.getElementById("pivot-empty").textContent = `加载失败：${e.message}`;
+      document.getElementById("pivot-empty").classList.remove("hidden");
+      document.getElementById("pivot-loading").classList.add("hidden");
+    }
+  }
+
+  function renderPeriodLabel() {
+    const label = document.getElementById("period-label");
+    if (!pivotData || !pivotData.period) {
+      label.textContent = "";
+      return;
+    }
+    const cur = pivotData.period.current_label || "";
+    const prev = pivotData.period.prev_label || "";
+    const yoy = pivotData.period.yoy_label || "";
+    const parts = [];
+    if (cur) parts.push(`当前周期：${cur}`);
+    if (prev) parts.push(`环比：${prev}`);
+    if (yoy) parts.push(`同比：${yoy}`);
+    label.textContent = parts.join(" ｜ ");
+  }
+
+  function getFieldValue(record, field) {
+    if (field === "tag_category") return record.category_id || 0;
+    if (field === "tag") return record.tag_id || 0;
+    if (field === "platform") return record.platform || "";
+    if (field === "agent") return record.agent_user_id || 0;
+    if (field === "scenario") return record.reception_scenario || "";
+    if (field === "satisfaction") return record.satisfaction_change || "";
+    return "";
+  }
+
+  function formatLabel(field, value) {
+    if (field === "tag_category") {
+      const cat = categoryById.get(Number(value));
+      return cat ? cat.name : "未分类";
+    }
+    if (field === "tag") {
+      const tag = tagById.get(Number(value));
+      return tag ? tag.name : "未命名标签";
+    }
+    if (field === "platform") {
+      return value || "未知平台";
+    }
+    if (field === "agent") {
+      if (!value || Number(value) === 0) return "未绑定客服";
+      const user = userById.get(Number(value));
+      return user ? user.name : `UID:${value}`;
+    }
+    if (field === "scenario") {
+      return value || "未知";
+    }
+    if (field === "satisfaction") {
+      return value || "未知";
+    }
+    return String(value || "");
+  }
+
+  function getSortKey(field, value) {
+    if (field === "tag_category") {
+      return categoryOrderMap.get(String(value)) ?? 9999;
+    }
+    if (field === "tag") {
+      return tagOrderMap.get(String(value)) ?? 9999;
+    }
+    if (field === "scenario") {
+      const idx = scenarioOrder.indexOf(value || "未知");
+      return idx === -1 ? 9999 : idx;
+    }
+    if (field === "satisfaction") {
+      const idx = satisfactionOrder.indexOf(value || "未知");
+      return idx === -1 ? 9999 : idx;
+    }
+    if (field === "agent") {
+      const user = userById.get(Number(value));
+      return user ? user.name : String(value || "");
+    }
+    return String(value || "");
+  }
+
+  function buildTotalIndex(totals) {
+    const idx = new Map();
+    totals.forEach(t => {
+      const key = `${t.platform || ""}||${t.agent_user_id || 0}||${t.reception_scenario || ""}||${t.satisfaction_change || ""}`;
+      idx.set(key, t);
+    });
+    return idx;
+  }
+
+  function getTotalsForDims(totalIndex, dims) {
+    const key = JSON.stringify({
+      platform: dims.platform || "",
+      agent: dims.agent_user_id || 0,
+      scenario: dims.reception_scenario || "",
+      satisfaction: dims.satisfaction_change || "",
+    });
+    if (!getTotalsForDims.cache) {
+      getTotalsForDims.cache = new Map();
+    }
+    if (getTotalsForDims.cache.has(key)) {
+      return getTotalsForDims.cache.get(key);
+    }
+
+    let cur = 0;
+    let prev = 0;
+    let yoy = 0;
+
+    for (const [k, v] of totalIndex.entries()) {
+      const [plat, agent, scenario, satisfaction] = k.split("||");
+      if (dims.platform && plat !== String(dims.platform)) continue;
+      if (dims.agent_user_id && String(agent) !== String(dims.agent_user_id)) continue;
+      if (dims.reception_scenario && scenario !== String(dims.reception_scenario)) continue;
+      if (dims.satisfaction_change && satisfaction !== String(dims.satisfaction_change)) continue;
+      cur += v.current || 0;
+      prev += v.prev || 0;
+      yoy += v.yoy || 0;
+    }
+
+    const result = { current: cur, prev, yoy };
+    getTotalsForDims.cache.set(key, result);
+    return result;
+  }
+
+  function formatDelta(cur, base) {
+    if (!base || base <= 0) {
+      return cur <= 0 ? "—" : `+${cur}`;
+    }
+    const diff = cur - base;
+    const pct = (diff / base) * 100;
+    const sign = diff >= 0 ? "+" : "";
+    return `${sign}${diff} (${sign}${pct.toFixed(0)}%)`;
+  }
+
+  function formatRatio(value) {
+    if (value === null || value === undefined || isNaN(value)) return "—";
+    return `${value.toFixed(2)}%`;
+  }
+
+  function formatRatioDelta(cur, base) {
+    if (base === null || base === undefined || base <= 0 || isNaN(base)) {
+      return cur <= 0 ? "—" : `+${cur.toFixed(2)}pp`;
+    }
+    const diff = cur - base;
+    const pct = (diff / base) * 100;
+    const sign = diff >= 0 ? "+" : "";
+    return `${sign}${diff.toFixed(2)}pp (${sign}${pct.toFixed(0)}%)`;
+  }
+
+  function getEffectiveRowFields() {
+    const selected = sanitizeRowFields(state.row_fields);
+    BASE_FIELDS.forEach(f => {
+      if (!selected.includes(f)) selected.push(f);
+    });
+    return selected;
+  }
+
+  function buildTree(records, rowFields) {
+    let gid = 1;
+    const root = {
+      id: "root",
+      label: "汇总",
+      field: "root",
+      value: "root",
+      level: 0,
+      dims: {},
+      tag_id: null,
+      metrics: { current: 0, prev: 0, yoy: 0 },
+      children: new Map(),
+    };
+
+    records.forEach(rec => {
+      root.metrics.current += rec.current || 0;
+      root.metrics.prev += rec.prev || 0;
+      root.metrics.yoy += rec.yoy || 0;
+      let node = root;
+
+      rowFields.forEach((field, idx) => {
+        const value = getFieldValue(rec, field);
+        const key = `${field}::${value}`;
+        if (!node.children.has(key)) {
+          const newNode = {
+            id: `g${gid++}`,
+            label: formatLabel(field, value),
+            field,
+            value,
+            level: idx + 1,
+            dims: { ...node.dims },
+            tag_id: null,
+            metrics: { current: 0, prev: 0, yoy: 0 },
+            children: new Map(),
+          };
+          if (field === "platform") newNode.dims.platform = value || "";
+          if (field === "agent") newNode.dims.agent_user_id = value || 0;
+          if (field === "scenario") newNode.dims.reception_scenario = value || "";
+          if (field === "satisfaction") newNode.dims.satisfaction_change = value || "";
+          if (field === "tag_category") newNode.dims.category_id = value || 0;
+          if (field === "tag") {
+            newNode.dims.tag_id = value || 0;
+            newNode.tag_id = value || 0;
+          }
+          node.children.set(key, newNode);
+        }
+        node = node.children.get(key);
+        node.metrics.current += rec.current || 0;
+        node.metrics.prev += rec.prev || 0;
+        node.metrics.yoy += rec.yoy || 0;
+      });
+    });
+
+    return root;
+  }
+
+  function flattenTree(node, rows, parentId = "") {
+    rows.push({
+      id: node.id,
+      parent_id: parentId,
+      level: node.level,
+      label: node.label,
+      field: node.field,
+      value: node.value,
+      is_header: node.children.size > 0,
+      metrics: node.metrics,
+      dims: node.dims,
+      tag_id: node.tag_id,
+    });
+
+    const children = Array.from(node.children.values());
+    if (children.length === 0) return;
+    const field = children[0].field;
+    children.sort((a, b) => {
+      const ak = getSortKey(field, a.value);
+      const bk = getSortKey(field, b.value);
+      if (typeof ak === "string" || typeof bk === "string") {
+        return String(ak).localeCompare(String(bk), "zh-Hans-CN");
+      }
+      return ak - bk;
+    });
+
+    children.forEach(child => flattenTree(child, rows, node.id));
+  }
+
+  function renderPivot() {
+    const tbody = document.getElementById("pivot-body");
+    tbody.innerHTML = "";
+    document.getElementById("pivot-loading").classList.add("hidden");
+    if (!pivotData || !Array.isArray(pivotData.tag_hits) || pivotData.tag_hits.length === 0) {
+      document.getElementById("pivot-empty").classList.remove("hidden");
+      return;
+    }
+
+    getTotalsForDims.cache = new Map();
+    const totalIndex = buildTotalIndex(pivotData.totals || []);
+    const root = buildTree(pivotData.tag_hits, getEffectiveRowFields());
+
+    const rows = [];
+    flattenTree(root, rows);
+
+    rows.forEach(r => {
+      const totals = getTotalsForDims(totalIndex, r.dims || {});
+      const ratioCur = totals.current > 0 ? (r.metrics.current / totals.current) * 100 : 0;
+      const ratioPrev = totals.prev > 0 ? (r.metrics.prev / totals.prev) * 100 : 0;
+      const ratioYoy = totals.yoy > 0 ? (r.metrics.yoy / totals.yoy) * 100 : 0;
+
+      const tr = document.createElement("tr");
+      tr.className = `border-b ${r.is_header ? "bg-slate-50 font-medium" : ""}`;
+      tr.dataset.rowId = `${r.id}-${r.is_header ? "header" : "row"}`;
+      tr.dataset.level = r.level;
+      tr.dataset.parent = r.parent_id || "";
+      tr.dataset.group = r.id;
+      tr.dataset.isHeader = r.is_header ? "True" : "False";
+
+      const nameTd = document.createElement("td");
+      nameTd.className = "py-2 pr-4";
+
+      if (r.is_header) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "text-left w-full";
+        btn.style.paddingLeft = `${r.level * 20}px`;
+        const ico = document.createElement("span");
+        ico.id = `ico-${r.id}`;
+        ico.textContent = "▾";
+        btn.appendChild(ico);
+        btn.appendChild(document.createTextNode(" "));
+        btn.addEventListener("click", () => toggleGroup(r.id));
+        if (r.field === "tag") {
+          const tag = tagById.get(Number(r.value));
+          if (tag) {
+            const tagLink = document.createElement("span");
+            tagLink.className = "underline";
+            tagLink.dataset.ruleTitle = tag.name || r.label;
+            tagLink.dataset.ruleText = tag.standard || "未配置";
+            tagLink.textContent = r.label;
+            tagLink.addEventListener("click", (e) => {
+              e.stopPropagation();
+              showRule(tagLink);
+            });
+            btn.appendChild(tagLink);
+          } else {
+            btn.appendChild(document.createTextNode(r.label));
+          }
+        } else {
+          btn.appendChild(document.createTextNode(r.label));
+        }
+        nameTd.appendChild(btn);
+      } else {
+        const inner = document.createElement("div");
+        inner.style.paddingLeft = `${r.level * 20 + 20}px`;
+        if (r.field === "tag") {
+          const tag = tagById.get(Number(r.value));
+          if (tag) {
+            const tagBtn = document.createElement("button");
+            tagBtn.type = "button";
+            tagBtn.className = "underline";
+            tagBtn.dataset.ruleTitle = tag.name || r.label;
+            tagBtn.dataset.ruleText = tag.standard || "未配置";
+            tagBtn.textContent = r.label;
+            tagBtn.addEventListener("click", () => showRule(tagBtn));
+            inner.appendChild(tagBtn);
+          } else {
+            inner.textContent = r.label;
+          }
+        } else {
+          inner.textContent = r.label;
+        }
+        nameTd.appendChild(inner);
+      }
+
+      const countTd = document.createElement("td");
+      countTd.className = "py-2 pr-4";
+      const canClick = r.tag_id && r.metrics.current > 0;
+      if (canClick) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "underline text-blue-600 hover:text-blue-800";
+        btn.textContent = r.metrics.current;
+        btn.dataset.tagId = r.tag_id;
+        btn.dataset.platform = r.dims.platform || "";
+        btn.dataset.agentUserId = r.dims.agent_user_id || "";
+        btn.dataset.scenario = r.dims.reception_scenario || "";
+        btn.dataset.satisfaction = r.dims.satisfaction_change || "";
+        btn.addEventListener("click", () => showTagCids(btn));
+        countTd.appendChild(btn);
+      } else {
+        countTd.textContent = r.metrics.current;
+      }
+
+      const momTd = document.createElement("td");
+      momTd.className = "py-2 pr-4 col-mom";
+      momTd.textContent = pivotData.period && pivotData.period.prev_label ? formatDelta(r.metrics.current, r.metrics.prev) : "—";
+
+      const yoyTd = document.createElement("td");
+      yoyTd.className = "py-2 pr-4 col-yoy";
+      yoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatDelta(r.metrics.current, r.metrics.yoy) : "—";
+
+      const ratioTd = document.createElement("td");
+      ratioTd.className = "py-2 pr-4";
+      ratioTd.textContent = formatRatio(totals.current > 0 ? ratioCur : null);
+
+      const ratioMomTd = document.createElement("td");
+      ratioMomTd.className = "py-2 pr-4 col-mom";
+      ratioMomTd.textContent = pivotData.period && pivotData.period.prev_label ? formatRatioDelta(ratioCur, ratioPrev) : "—";
+
+      const ratioYoyTd = document.createElement("td");
+      ratioYoyTd.className = "py-2 pr-4 col-yoy";
+      ratioYoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatRatioDelta(ratioCur, ratioYoy) : "—";
+
+      const totalTd = document.createElement("td");
+      totalTd.className = "py-2 pr-4";
+      totalTd.textContent = totals.current;
+
+      tr.appendChild(nameTd);
+      tr.appendChild(countTd);
+      tr.appendChild(momTd);
+      tr.appendChild(yoyTd);
+      tr.appendChild(ratioTd);
+      tr.appendChild(ratioMomTd);
+      tr.appendChild(ratioYoyTd);
+      tr.appendChild(totalTd);
+
+      tbody.appendChild(tr);
+    });
+
+    updateColumnVisibility();
+    populateLevelSelect();
+  }
+
+  function populateLevelSelect() {
+    const select = document.getElementById("level-select");
+    select.innerHTML = "";
+    const fields = getEffectiveRowFields();
+    const levels = fields.map((field, idx) => {
+      const def = FIELD_DEFS.find(f => f.id === field);
+      if (def) return { level: idx + 1, label: def.label };
+      if (field === "tag_category") return { level: idx + 1, label: "标签一级分类" };
+      if (field === "tag") return { level: idx + 1, label: "标签" };
+      return { level: idx + 1, label: field };
+    });
+    if (levels.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "1";
+      opt.textContent = "层级";
+      select.appendChild(opt);
+      return;
+    }
+    levels.forEach(l => {
+      const opt = document.createElement("option");
+      opt.value = l.level;
+      opt.textContent = `第${l.level}层：${l.label}`;
+      select.appendChild(opt);
+    });
+  }
+
+  function toggleGroup(groupId) {
+    const ico = document.getElementById("ico-" + groupId);
+    const isExpanded = ico && ico.textContent === "▾";
+
+    if (isExpanded) {
+      hideAllDescendants(groupId);
+      if (ico) ico.textContent = "▸";
+    } else {
+      const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
+      directChildren.forEach(child => child.classList.remove("hidden"));
+      if (ico) ico.textContent = "▾";
+    }
+  }
+
   function hideAllDescendants(parentId) {
-    // 隐藏该组的所有明细行
-    const detailRows = document.querySelectorAll('[data-group="' + parentId + '"][data-is-header="False"]');
-    detailRows.forEach(row => row.classList.add('hidden'));
-    
-    // 隐藏所有子元素
     const children = document.querySelectorAll('[data-parent="' + parentId + '"]');
     children.forEach(child => {
-      child.classList.add('hidden');
-      const childGroupId = child.getAttribute('data-group');
-      const childIco = document.getElementById('ico-' + childGroupId);
+      child.classList.add("hidden");
+      const childGroupId = child.getAttribute("data-group");
+      const childIco = document.getElementById("ico-" + childGroupId);
       if (childIco) {
-        childIco.textContent = '▸';
+        childIco.textContent = "▸";
       }
-      // 递归隐藏
       hideAllDescendants(childGroupId);
     });
   }
+
+  function expandCollapseLevel(level, expand) {
+    const headers = document.querySelectorAll(`[data-level="${level}"][data-is-header="True"]`);
+    headers.forEach(row => {
+      const groupId = row.getAttribute("data-group");
+      const ico = document.getElementById("ico-" + groupId);
+      if (expand) {
+        if (ico) ico.textContent = "▾";
+        const directChildren = document.querySelectorAll('[data-parent="' + groupId + '"]');
+        directChildren.forEach(r => r.classList.remove("hidden"));
+      } else {
+        if (ico) ico.textContent = "▸";
+        hideAllDescendants(groupId);
+      }
+    });
+  }
+
+  function expandAll() {
+    document.querySelectorAll('[data-is-header="True"]').forEach(row => {
+      const groupId = row.getAttribute("data-group");
+      const ico = document.getElementById("ico-" + groupId);
+      if (ico) ico.textContent = "▾";
+      row.classList.remove("hidden");
+    });
+    document.querySelectorAll("#pivot-body tr").forEach(row => row.classList.remove("hidden"));
+  }
+
+  function collapseAll() {
+    document.querySelectorAll('[data-is-header="True"]').forEach(row => {
+      const groupId = row.getAttribute("data-group");
+      const ico = document.getElementById("ico-" + groupId);
+      if (ico) ico.textContent = "▸";
+      const children = document.querySelectorAll('[data-parent="' + groupId + '"]');
+      children.forEach(child => child.classList.add("hidden"));
+    });
+    document.querySelectorAll('[data-is-header="False"]').forEach(row => row.classList.add("hidden"));
+    document.querySelectorAll('[data-level="0"]').forEach(row => row.classList.remove("hidden"));
+  }
+
+  function renderFieldChips() {
+    const activeWrap = document.getElementById("row-fields");
+    const availableWrap = document.getElementById("available-fields");
+    activeWrap.innerHTML = "";
+    availableWrap.innerHTML = "";
+
+    const active = state.row_fields.slice();
+    const available = FIELD_DEFS.map(f => f.id).filter(id => !active.includes(id));
+
+    function createChip(fieldId, listType) {
+      const def = FIELD_DEFS.find(f => f.id === fieldId);
+      const chip = document.createElement("div");
+      chip.className = "flex items-center gap-1 px-2 py-1 rounded-lg border bg-white text-xs cursor-move";
+      chip.draggable = true;
+      chip.dataset.field = fieldId;
+      chip.dataset.list = listType;
+      chip.innerHTML = `<span class=\"text-slate-400\">⋮⋮</span><span>${def ? def.label : fieldId}</span>`;
+      chip.addEventListener("dragstart", e => {
+        e.dataTransfer.setData("text/plain", fieldId);
+        e.dataTransfer.setData("source", listType);
+      });
+      chip.addEventListener("dragover", e => e.preventDefault());
+      chip.addEventListener("drop", e => {
+        e.preventDefault();
+        const field = e.dataTransfer.getData("text/plain");
+        moveField(field, listType, fieldId);
+      });
+      return chip;
+    }
+
+    active.forEach(id => activeWrap.appendChild(createChip(id, "active")));
+    available.forEach(id => availableWrap.appendChild(createChip(id, "available")));
+  }
+
+  function getInsertBeforeField(container, x, y) {
+    const chips = Array.from(container.querySelectorAll("[data-field]"));
+    if (!chips.length) return null;
+    let closest = null;
+    let closestDist = Infinity;
+    chips.forEach(chip => {
+      const rect = chip.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dist = Math.hypot(x - cx, y - cy);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = chip;
+      }
+    });
+    if (!closest) return null;
+    const rect = closest.getBoundingClientRect();
+    if (x < rect.left + rect.width / 2) {
+      return closest.dataset.field;
+    }
+    const order = chips.map(chip => chip.dataset.field);
+    const idx = order.indexOf(closest.dataset.field);
+    return idx >= 0 && idx + 1 < order.length ? order[idx + 1] : null;
+  }
+
+  function moveField(fieldId, targetList, beforeField) {
+    if (!FIELD_DEFS.find(f => f.id === fieldId)) return;
+    const active = sanitizeRowFields(state.row_fields);
+    const hasField = active.includes(fieldId);
+
+    if (targetList === "available") {
+      if (hasField) {
+        setState({ row_fields: active.filter(f => f !== fieldId) });
+      }
+      renderFieldChips();
+      renderPivot();
+      return;
+    }
+
+    let next = active.filter(f => f !== fieldId);
+    const insertIndex = beforeField ? next.indexOf(beforeField) : -1;
+    if (insertIndex >= 0) {
+      next.splice(insertIndex, 0, fieldId);
+    } else {
+      next.push(fieldId);
+    }
+    setState({ row_fields: next });
+    renderFieldChips();
+    renderPivot();
+  }
+
+  document.getElementById("row-fields").addEventListener("dragover", e => e.preventDefault());
+  document.getElementById("row-fields").addEventListener("drop", e => {
+    e.preventDefault();
+    const field = e.dataTransfer.getData("text/plain");
+    const beforeField = getInsertBeforeField(document.getElementById("row-fields"), e.clientX, e.clientY);
+    moveField(field, "active", beforeField);
+  });
+  document.getElementById("available-fields").addEventListener("dragover", e => e.preventDefault());
+  document.getElementById("available-fields").addEventListener("drop", e => {
+    e.preventDefault();
+    const field = e.dataTransfer.getData("text/plain");
+    moveField(field, "available", null);
+  });
+
+  document.getElementById("time-mode").addEventListener("change", () => {
+    ensureDefaultTimeForMode(document.getElementById("time-mode").value, true);
+    applyTimeModeUI();
+    scheduleRefresh();
+  });
+  document.getElementById("start-date").addEventListener("change", scheduleRefresh);
+  document.getElementById("end-date").addEventListener("change", scheduleRefresh);
+  document.getElementById("year-select").addEventListener("change", () => {
+    updateWeekOptions();
+    scheduleRefresh();
+  });
+  document.getElementById("quarter-select").addEventListener("change", scheduleRefresh);
+  document.getElementById("month-select").addEventListener("change", scheduleRefresh);
+  document.getElementById("week-select").addEventListener("change", scheduleRefresh);
+  document.getElementById("day-select").addEventListener("change", scheduleRefresh);
+  document.getElementById("platform-filter").addEventListener("change", scheduleRefresh);
+  document.getElementById("agent-filter").addEventListener("change", scheduleRefresh);
+  document.getElementById("scenario-filter").addEventListener("change", scheduleRefresh);
+  document.getElementById("satisfaction-filter").addEventListener("change", scheduleRefresh);
+
+  document.getElementById("manual-refresh").addEventListener("click", refreshReport);
+  document.getElementById("toggle-mom").addEventListener("click", () => {
+    setState({ show_mom: !state.show_mom });
+    updateToggleButtons();
+  });
+  document.getElementById("toggle-yoy").addEventListener("click", () => {
+    setState({ show_yoy: !state.show_yoy });
+    updateToggleButtons();
+    scheduleRefresh();
+  });
+
+  document.getElementById("expand-all").addEventListener("click", expandAll);
+  document.getElementById("collapse-all").addEventListener("click", collapseAll);
+  document.getElementById("expand-level").addEventListener("click", () => {
+    const level = Number(document.getElementById("level-select").value || 1);
+    expandCollapseLevel(level, true);
+  });
+  document.getElementById("collapse-level").addEventListener("click", () => {
+    const level = Number(document.getElementById("level-select").value || 1);
+    expandCollapseLevel(level, false);
+  });
+
   function showRule(btn) {
-    const title = btn.getAttribute('data-rule-title') || '判定标准';
-    const text = btn.getAttribute('data-rule-text') || '未配置';
-    document.getElementById('rule-title').textContent = title;
-    document.getElementById('rule-text').textContent = text;
-    const modal = document.getElementById('rule-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
+    const title = btn.getAttribute("data-rule-title") || "判定标准";
+    const text = btn.getAttribute("data-rule-text") || "未配置";
+    document.getElementById("rule-title").textContent = title;
+    document.getElementById("rule-text").textContent = text;
+    const modal = document.getElementById("rule-modal");
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
   }
+
   function closeRule() {
-    const modal = document.getElementById('rule-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
+    const modal = document.getElementById("rule-modal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
   }
-  document.getElementById('rule-modal').addEventListener('click', function(e){
-    if (e.target && e.target.id === 'rule-modal') closeRule();
+
+  document.getElementById("rule-modal").addEventListener("click", function(e){
+    if (e.target && e.target.id === "rule-modal") closeRule();
   });
 
   async function showTagCids(btn) {
-    const tagId = btn.getAttribute('data-tag-id');
-    const platform = btn.getAttribute('data-platform');
-    const agentUserId = btn.getAttribute('data-agent-user-id');
-    
-    // Build query params
+    const tagId = btn.getAttribute("data-tag-id");
+    if (!tagId) return;
+    const platform = btn.getAttribute("data-platform");
+    const agentUserId = btn.getAttribute("data-agent-user-id");
+    const scenario = btn.getAttribute("data-scenario");
+    const satisfaction = btn.getAttribute("data-satisfaction");
+
     const params = new URLSearchParams();
-    params.append('tag_id', tagId);
-    if (filterParams.start) params.append('start', filterParams.start);
-    if (filterParams.end) params.append('end', filterParams.end);
-    if (platform) params.append('platform', platform);
-    if (agentUserId) params.append('agent_user_id', agentUserId);
-    
-    const modal = document.getElementById('cid-list-modal');
-    const loading = document.getElementById('cid-list-loading');
-    const content = document.getElementById('cid-list-content');
-    const title = document.getElementById('cid-list-title');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    loading.classList.remove('hidden');
-    content.classList.add('hidden');
-    
+    params.append("tag_id", tagId);
+    const start = document.getElementById("start-date").value;
+    const end = document.getElementById("end-date").value;
+    if (start) params.append("start", start);
+    if (end) params.append("end", end);
+    if (platform) params.append("platform", platform);
+    if (agentUserId) params.append("agent_user_id", agentUserId);
+    if (scenario) params.append("reception_scenario", scenario);
+    if (satisfaction) params.append("satisfaction_change", satisfaction);
+
+    const modal = document.getElementById("cid-list-modal");
+    const loading = document.getElementById("cid-list-loading");
+    const content = document.getElementById("cid-list-content");
+    const title = document.getElementById("cid-list-title");
+
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+    loading.classList.remove("hidden");
+    content.classList.add("hidden");
+
     try {
-      const response = await fetch('/api/reports/tags/conversations?' + params.toString());
+      const response = await fetch("/api/reports/tags/conversations?" + params.toString());
       const data = await response.json();
-      
+
       title.textContent = `命中标签的对话列表（共 ${data.cids.length} 个）`;
-      
+
       if (data.cids.length === 0) {
         content.innerHTML = '<div class="text-sm text-slate-500">暂无数据</div>';
       } else {
-        content.innerHTML = data.cids.map(cid => 
+        content.innerHTML = data.cids.map(cid =>
           `<a href="#" class="cid-link text-blue-600 hover:underline" data-cid="${cid}">CID=${cid}</a>`
-        ).join(' ');
+        ).join(" ");
       }
-      
-      loading.classList.add('hidden');
-      content.classList.remove('hidden');
+
+      loading.classList.add("hidden");
+      content.classList.remove("hidden");
     } catch (error) {
-      content.innerHTML = '<div class="text-sm text-red-600">加载失败：' + error.message + '</div>';
-      loading.classList.add('hidden');
-      content.classList.remove('hidden');
+      content.innerHTML = '<div class="text-sm text-red-600">加载失败：' + error.message + "</div>";
+      loading.classList.add("hidden");
+      content.classList.remove("hidden");
     }
   }
-  
+
   function closeCidList() {
-    const modal = document.getElementById('cid-list-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
+    const modal = document.getElementById("cid-list-modal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
   }
-  
-  document.getElementById('cid-list-modal')?.addEventListener('click', function(e){
-    if (e.target && e.target.id === 'cid-list-modal') closeCidList();
+
+  document.getElementById("cid-list-modal")?.addEventListener("click", function(e){
+    if (e.target && e.target.id === "cid-list-modal") closeCidList();
   });
+
+  loadState();
+  applyStateToFilters();
+  renderFieldChips();
+  refreshReport();
 </script>
 
 {% endblock %}

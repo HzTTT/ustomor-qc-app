@@ -240,24 +240,51 @@ def analysis_user_prompt(
 
 
 def build_rejected_suggestions_block(session: "Session") -> str:
-    """从 TagSuggestion 表读取已驳回的标签建议，构建提醒块，指导AI勿再建议类似标签。"""
-    from models import TagSuggestion
+    """从管理员维护的驳回池读取标签规则，构建提醒块，指导AI勿再建议类似标签。"""
+    from models import RejectedTagRule, TagSuggestion
     from sqlmodel import select
+    from tag_reject import parse_aliases
 
+    rules = session.exec(
+        select(RejectedTagRule)
+        .where(RejectedTagRule.is_active == True)  # noqa: E712
+        .order_by(RejectedTagRule.updated_at.desc())
+    ).all()
+
+    if rules:
+        lines = ["【重要】以下标签建议已被管理员驳回或屏蔽，请勿再次建议类似标签："]
+        for r in rules:
+            cat = r.category or "未分类"
+            name = r.tag_name or "未命名"
+            aliases = parse_aliases(r.aliases or "")
+            alias_hint = ""
+            if aliases:
+                alias_short = "，".join(aliases[:6])
+                if len(aliases) > 6:
+                    alias_short += "…"
+                alias_hint = f"（同义/近似：{alias_short}）"
+            lines.append(f"- [{cat}] {name}{alias_hint}")
+        return "\n".join(lines)
+
+    # Fallback: legacy rejected suggestions (before rejected rules are managed).
     rejected = session.exec(
         select(TagSuggestion)
         .where(TagSuggestion.status == "rejected")
         .order_by(TagSuggestion.reviewed_at.desc())
-        .limit(50)
     ).all()
 
     if not rejected:
         return ""
 
     lines = ["【重要】以下标签建议已被管理员驳回，请勿再次建议类似标签："]
+    seen = set()
     for r in rejected:
         cat = r.suggested_category or "未分类"
         name = r.suggested_tag_name or "未命名"
+        key = f"{cat}::{name}"
+        if key in seen:
+            continue
+        seen.add(key)
         reason = (r.review_notes or "").strip()
         if reason:
             reason_short = reason.replace("\n", " ")

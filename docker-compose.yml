@@ -53,6 +53,7 @@ services:
       OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
     volumes:
       - ./data:/data
+      - ./scripts:/app/scripts
     ports:
       - "8000:8000"
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

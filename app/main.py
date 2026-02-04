@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import openpyxl
 
-from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, BackgroundTasks, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -43,6 +43,7 @@ from models import (
     TagDefinition,
     ConversationTagHit,
     TagSuggestion,
+    RejectedTagRule,
     ManualTagBinding,
 )
 from auth import (
@@ -61,6 +62,7 @@ from prompts import (
     analysis_system_prompt_fixed_part,
     get_editable_qc_prompt,
 )
+from tag_reject import normalize_key
 
 from ai_client import chat_completion, AIError, list_model_ids_sync, get_ai_settings
 from notify import get_feishu_webhook_url, send_feishu_webhook
@@ -1362,6 +1364,91 @@ def tags_manage_page(
     )
 
 
+@app.post("/settings/tags/category/reorder")
+async def tags_category_reorder(
+    request: Request,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_json"})
+
+    ordered_ids = payload.get("ordered_ids") if isinstance(payload, dict) else None
+    if not isinstance(ordered_ids, list) or not ordered_ids:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_order"})
+
+    try:
+        ids = [int(x) for x in ordered_ids]
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_id"})
+
+    if len(set(ids)) != len(ids):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "duplicate_id"})
+
+    existing = session.exec(select(TagCategory.id).where(TagCategory.id.in_(ids))).all()
+    if len(existing) != len(ids):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "not_found"})
+
+    now = datetime.utcnow()
+    for idx, cid in enumerate(ids):
+        c = session.get(TagCategory, cid)
+        if not c:
+            continue
+        c.sort_order = (idx + 1) * 10
+        c.updated_at = now
+        session.add(c)
+    session.commit()
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/settings/tags/tag/reorder")
+async def tags_tag_reorder(
+    request: Request,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_json"})
+
+    if not isinstance(payload, dict):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_payload"})
+
+    category_id = payload.get("category_id")
+    ordered_ids = payload.get("ordered_ids")
+    if not isinstance(ordered_ids, list) or not ordered_ids or not category_id:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_order"})
+
+    try:
+        cat_id = int(category_id)
+        ids = [int(x) for x in ordered_ids]
+    except Exception:
+        return JSONResponse(status_code=400, content={"ok": False, "error": "invalid_id"})
+
+    if len(set(ids)) != len(ids):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "duplicate_id"})
+
+    existing = session.exec(
+        select(TagDefinition.id).where(TagDefinition.category_id == cat_id, TagDefinition.id.in_(ids))
+    ).all()
+    if len(existing) != len(ids):
+        return JSONResponse(status_code=400, content={"ok": False, "error": "not_found"})
+
+    now = datetime.utcnow()
+    for idx, tid in enumerate(ids):
+        t = session.get(TagDefinition, tid)
+        if not t:
+            continue
+        t.sort_order = (idx + 1) * 10
+        t.updated_at = now
+        session.add(t)
+    session.commit()
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/settings/tags/category/create")
 def tags_category_create(
     user: User = Depends(require_role("admin", "supervisor")),
@@ -1667,7 +1754,7 @@ def tags_template_download(
     ws.title = "tags"
     ws.append(["CategoryName(一级分类)", "CategoryDescription(分类说明)", "TagName(二级标签)", "Standard(判定标准/给AI)", "Description(说明/给人看)"])
     ws.append(["客服接待", "", "未及时回复", "客服超过X分钟未回复/反复催促仍无反馈，则命中", "例：客户多次追问，客服无明确答复"])
-    ws.append(["服务流程", "", "未按售后流程", "未引导客户按退换/补发/登记等标准流程执行，则命中", ""])
+    ws.append(["其他标签", "", "无法归类", "无法匹配现有分类且对客户造成影响时，可暂归为其他标签", ""])
     ws.append(["产品质量投诉", "", "色差/做工问题", "客户明确反馈色差、起球、开线等质量问题，则命中", ""])
 
     out = io.BytesIO()
@@ -1861,7 +1948,7 @@ def tag_suggestions_page(
     status_filter: str = "",
 ):
     status_norm = (status_filter or "").strip().lower()
-    q = select(TagSuggestion).order_by(TagSuggestion.created_at.desc()).limit(200)
+    q = select(TagSuggestion).order_by(TagSuggestion.created_at.desc())
     if status_norm in ("pending", "approved", "rejected"):
         q = q.where(TagSuggestion.status == status_norm)
     suggestions = session.exec(q).all()
@@ -1968,8 +2055,197 @@ async def reject_tag_suggestion(
     ts.reviewed_at = datetime.utcnow()
     ts.review_notes = (form.get("review_notes") or "").strip()
     session.add(ts)
+    _upsert_rejected_tag_rule(
+        session=session,
+        user=user,
+        category=ts.suggested_category,
+        tag_name=ts.suggested_tag_name,
+        notes=ts.review_notes,
+    )
     session.commit()
     return _redirect("/settings/tag-suggestions?ok=已驳回")
+
+
+def _upsert_rejected_tag_rule(
+    *,
+    session: Session,
+    user: User,
+    category: str,
+    tag_name: str,
+    notes: str = "",
+) -> None:
+    cat = (category or "").strip()
+    name = (tag_name or "").strip()
+    norm_key = normalize_key(cat, name)
+    if not norm_key:
+        return
+    now = datetime.utcnow()
+    existing = session.exec(
+        select(RejectedTagRule).where(RejectedTagRule.norm_key == norm_key)
+    ).first()
+    if existing:
+        if cat:
+            existing.category = cat
+        if name:
+            existing.tag_name = name
+        if notes:
+            existing.notes = notes
+        existing.is_active = True
+        existing.updated_at = now
+        existing.updated_by_user_id = user.id
+        session.add(existing)
+        return
+    session.add(
+        RejectedTagRule(
+            category=cat,
+            tag_name=name,
+            aliases="",
+            notes=notes or "",
+            norm_key=norm_key,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            created_by_user_id=user.id,
+            updated_by_user_id=user.id,
+        )
+    )
+
+
+@app.get("/settings/rejected-tags", response_class=HTMLResponse)
+def rejected_tags_page(
+    request: Request,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+    status_filter: str = "",
+    q: str = "",
+):
+    status_norm = (status_filter or "").strip().lower()
+    query = select(RejectedTagRule).order_by(RejectedTagRule.updated_at.desc())
+    if status_norm == "active":
+        query = query.where(RejectedTagRule.is_active == True)  # noqa: E712
+    elif status_norm == "inactive":
+        query = query.where(RejectedTagRule.is_active == False)  # noqa: E712
+    qv = (q or "").strip()
+    if qv:
+        like = f"%{qv}%"
+        query = query.where(
+            or_(
+                RejectedTagRule.category.ilike(like),
+                RejectedTagRule.tag_name.ilike(like),
+                RejectedTagRule.aliases.ilike(like),
+                RejectedTagRule.notes.ilike(like),
+            )
+        )
+    rules = session.exec(query).all()
+
+    return _template(
+        request,
+        "rejected_tags.html",
+        user=user,
+        rules=rules,
+        status_filter=status_filter or "",
+        q=q or "",
+        ok=request.query_params.get("ok"),
+        error=request.query_params.get("error"),
+    )
+
+
+@app.post("/settings/rejected-tags/create")
+async def rejected_tags_create(
+    request: Request,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+):
+    form = await request.form()
+    category = (form.get("category") or "").strip()
+    tag_name = (form.get("tag_name") or "").strip()
+    aliases = (form.get("aliases") or "").strip()
+    notes = (form.get("notes") or "").strip()
+    is_active = (form.get("is_active") or "on") == "on"
+    norm_key = normalize_key(category, tag_name)
+    if not norm_key:
+        return _redirect("/settings/rejected-tags?error=分类与标签名不能为空")
+
+    existing = session.exec(
+        select(RejectedTagRule).where(RejectedTagRule.norm_key == norm_key)
+    ).first()
+    if existing:
+        return _redirect("/settings/rejected-tags?error=已存在相同的驳回规则")
+
+    now = datetime.utcnow()
+    session.add(
+        RejectedTagRule(
+            category=category,
+            tag_name=tag_name,
+            aliases=aliases,
+            notes=notes,
+            norm_key=norm_key,
+            is_active=is_active,
+            created_at=now,
+            updated_at=now,
+            created_by_user_id=user.id,
+            updated_by_user_id=user.id,
+        )
+    )
+    session.commit()
+    return _redirect("/settings/rejected-tags?ok=已添加")
+
+
+@app.post("/settings/rejected-tags/{rid:int}/update")
+async def rejected_tags_update(
+    request: Request,
+    rid: int,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+):
+    form = await request.form()
+    rule = session.get(RejectedTagRule, rid)
+    if not rule:
+        return _redirect("/settings/rejected-tags?error=记录不存在")
+
+    category = (form.get("category") or "").strip()
+    tag_name = (form.get("tag_name") or "").strip()
+    aliases = (form.get("aliases") or "").strip()
+    notes = (form.get("notes") or "").strip()
+    is_active = (form.get("is_active") or "") == "on"
+
+    new_norm = normalize_key(category, tag_name)
+    if not new_norm:
+        return _redirect("/settings/rejected-tags?error=分类与标签名不能为空")
+
+    if new_norm != rule.norm_key:
+        exists = session.exec(
+            select(RejectedTagRule).where(RejectedTagRule.norm_key == new_norm)
+        ).first()
+        if exists:
+            return _redirect("/settings/rejected-tags?error=已存在相同的驳回规则")
+
+    rule.category = category
+    rule.tag_name = tag_name
+    rule.aliases = aliases
+    rule.notes = notes
+    rule.is_active = is_active
+    rule.norm_key = new_norm
+    rule.updated_at = datetime.utcnow()
+    rule.updated_by_user_id = user.id
+    session.add(rule)
+    session.commit()
+    return _redirect("/settings/rejected-tags?ok=已更新")
+
+
+@app.post("/settings/rejected-tags/{rid:int}/remove")
+async def rejected_tags_remove(
+    request: Request,
+    rid: int,
+    user: User = Depends(require_role("admin", "supervisor")),
+    session: Session = Depends(get_session),
+):
+    rule = session.get(RejectedTagRule, rid)
+    if not rule:
+        return _redirect("/settings/rejected-tags?error=记录不存在")
+    session.delete(rule)
+    session.commit()
+    return _redirect("/settings/rejected-tags?ok=已删除")
 
 
 def _upsert_agent_binding_and_sync(*, session: Session, platform: str, agent_account: str, user_id: int, created_by_user_id: int) -> AgentBinding:
@@ -2035,6 +2311,7 @@ def bindings_page(
             Message.agent_account.label("agent_account"),
             func.count(func.distinct(Conversation.id)).label("convo_cnt"),
             func.max(func.coalesce(Message.ts, Conversation.uploaded_at)).label("last_seen"),
+            func.max(func.nullif(Message.agent_nick, "")).label("agent_nick"),
         )
         .join(Conversation, Conversation.id == Message.conversation_id)
         .where(
@@ -2062,6 +2339,7 @@ def bindings_page(
             "agent_account": r[1] or "",
             "convo_cnt": int(r[2] or 0),
             "last_seen": r[3],
+            "agent_nick": (r[4] or "").strip(),
         }
         for r in (unbound_rows or [])
         if (r and (r[1] or "").strip())
@@ -2412,16 +2690,18 @@ def conversations_list(
     request: Request,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-    agent_id: str | None = None,
-    ext_agent_account: str | None = None,
-    tag: str = "",
+    agent_id: list[str] | None = Query(None),
+    ext_agent_account: list[str] | None = Query(None),
     match: str = "",
+    time_mode: str | None = None,
     start: str = "",
     end: str = "",
+    min_rounds: str = "",
+    max_rounds: str = "",
     only_flagged: str | None = None,
-    reception_scenario: str = "",
-    satisfaction_change: str = "",
-    tag_id: str = "",
+    reception_scenario: list[str] | None = Query(None),
+    satisfaction_change: list[str] | None = Query(None),
+    tag_id: list[str] | None = Query(None),
     cid: str = "",
     has_analysis: str = "",
     page: int = 1,
@@ -2430,7 +2710,6 @@ def conversations_list(
 
     Filters:
     - agent_id: internal user id (admin/supervisor only)
-    - tag: keyword across tags/summary/parsing
     - start/end: date range on customer message time (fallback to started_at/uploaded_at)
     - only_flagged: '1' to show analyses flagged for review
     """
@@ -2444,76 +2723,82 @@ def conversations_list(
         page = 1
     page = max(1, page)
 
-    agent_id_int: int | None = None
-    ext_agent_account_norm = (ext_agent_account or "").strip()
+    def _parse_int_list(values: list[str] | None) -> list[int]:
+        out: list[int] = []
+        for v in values or []:
+            s = str(v or "").strip()
+            if not s:
+                continue
+            try:
+                out.append(int(s))
+            except Exception:
+                continue
+        return out
+
+    agent_ids = _parse_int_list(agent_id)
+    ext_agent_account_norms = [str(v or "").strip() for v in (ext_agent_account or []) if str(v or "").strip()]
 
     # 需求更新：所有已登录客服都可以查看全部对话。
     # 同时保留（可选的）按站内客服账号过滤功能：用于“聊天接待界面”按客服筛选。
     conv_where: list = []
-    agent_id_int = None
-    if agent_id is not None:
-        s = (agent_id or "").strip()
-        if s:
-            try:
-                agent_id_int = int(s)
-            except Exception:
-                agent_id_int = None
-
-    if agent_id_int:
+    if agent_ids:
         # include both explicit assignment and (platform,agent_account) bindings as fallback
-        bs = session.exec(select(AgentBinding).where(AgentBinding.user_id == agent_id_int)).all()
-        or_terms = [Conversation.agent_user_id == agent_id_int]
-        for b in bs:
-            # primary agent_account match (legacy)
-            platform_norm = str(b.platform or "").strip().lower()
-            agent_acc = str(b.agent_account or "").strip()
-            if platform_norm and agent_acc:
-                # 使用 lower() 兼容历史数据大小写不一致
-                or_terms.append(and_(func.lower(Conversation.platform) == platform_norm, Conversation.agent_account == agent_acc))
-            # multi-agent: any agent account appearing in messages
-            if agent_acc:
-                or_terms.append(
-                    exists(
-                        select(1)
-                        .select_from(Message)
-                        .where(
-                            Message.conversation_id == Conversation.id,
-                            Message.sender == "agent",
-                            Message.agent_account == agent_acc,
+        bs = session.exec(select(AgentBinding).where(AgentBinding.user_id.in_(agent_ids))).all()
+        bindings_by_user: dict[int, list[AgentBinding]] = {}
+        for b in bs or []:
+            try:
+                uid = int(b.user_id)
+            except Exception:
+                continue
+            bindings_by_user.setdefault(uid, []).append(b)
+
+        multi_or_terms = []
+        for uid in agent_ids:
+            or_terms = [Conversation.agent_user_id == uid]
+            for b in bindings_by_user.get(uid, []):
+                # primary agent_account match (legacy)
+                platform_norm = str(b.platform or "").strip().lower()
+                agent_acc = str(b.agent_account or "").strip()
+                if platform_norm and agent_acc:
+                    # 使用 lower() 兼容历史数据大小写不一致
+                    or_terms.append(and_(func.lower(Conversation.platform) == platform_norm, Conversation.agent_account == agent_acc))
+                # multi-agent: any agent account appearing in messages
+                if agent_acc:
+                    or_terms.append(
+                        exists(
+                            select(1)
+                            .select_from(Message)
+                            .where(
+                                Message.conversation_id == Conversation.id,
+                                Message.sender == "agent",
+                                Message.agent_account == agent_acc,
+                            )
                         )
                     )
-                )
-        conv_where.append(or_(*or_terms))
+            multi_or_terms.append(or_(*or_terms))
+
+        if multi_or_terms:
+            conv_where.append(or_(*multi_or_terms))
 
     # 站外客服账号筛选：用于精确定位某个淘宝/抖音等“外部账号”参与的对话
     # 兼容两种数据来源：
     # 1) Conversation.agent_account（旧数据/主客服）
     # 2) Message.agent_account（多客服场景，每条消息自己的外部账号）
-    if ext_agent_account_norm:
+    if ext_agent_account_norms:
         conv_where.append(
             or_(
-                Conversation.agent_account == ext_agent_account_norm,
+                Conversation.agent_account.in_(ext_agent_account_norms),
                 exists(
                     select(1)
                     .select_from(Message)
                     .where(
                         Message.conversation_id == Conversation.id,
                         Message.sender == "agent",
-                        Message.agent_account == ext_agent_account_norm,
+                        Message.agent_account.in_(ext_agent_account_norms),
                     )
                 ),
             )
         )
-
-    # Date range filter
-    def _parse_date(s: str):
-        s = (s or "").strip()
-        if not s:
-            return None
-        try:
-            return datetime.strptime(s, "%Y-%m-%d")
-        except Exception:
-            return None
 
     # We display & sort by "客户消息时间" (max buyer ts), fallback to started_at/uploaded_at.
     customer_ts_sq = (
@@ -2537,28 +2822,80 @@ def conversations_list(
 
     display_ts = func.coalesce(customer_ts_sq.c.customer_ts, Conversation.started_at, Conversation.uploaded_at)
 
-    start_dt = _parse_date(start)
-    end_dt = _parse_date(end)
-    if start_dt:
-        conv_where.append(display_ts >= start_dt)
-    if end_dt:
-        # inclusive end -> < end + 1 day
-        conv_where.append(display_ts < (end_dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)))
+    time_mode_norm = (time_mode or "").strip()
+    start_norm = (start or "").strip()
+    end_norm = (end or "").strip()
+
+    # Backward compatible: old URLs only had start/end.
+    if not time_mode_norm:
+        time_mode_norm = "custom" if (start_norm or end_norm) else "all"
+
+    # Prevent "custom" with empty dates from implicitly becoming last 7 days.
+    if time_mode_norm == "custom" and not (start_norm or end_norm):
+        time_mode_norm = "all"
+
+    allowed_modes = {"all", "last_year", "last_quarter", "last_month", "last_week", "yesterday", "custom"}
+    if time_mode_norm not in allowed_modes:
+        time_mode_norm = "custom" if (start_norm or end_norm) else "all"
+
+    period = _build_tag_report_period(
+        time_mode_norm if time_mode_norm != "custom" else "custom",
+        start_norm or None,
+        end_norm or None,
+        False,
+    )
+
+    cur_start = period.get("cur_start")
+    cur_end_excl = period.get("cur_end_excl")
+    if cur_start:
+        conv_where.append(display_ts >= cur_start)
+    if cur_end_excl:
+        conv_where.append(display_ts < cur_end_excl)
 
     # Tag/flag filters are applied via ConversationAnalysis (any analysis record).
-    tag_norm = (tag or "").strip()
     match_norm = (match or "").strip()
     only_flagged_bool = (only_flagged == "1")
-    reception_scenario_norm = (reception_scenario or "").strip()
-    satisfaction_change_norm = (satisfaction_change or "").strip()
-    tag_id_norm = (tag_id or "").strip()
+    reception_scenario_norms = [str(v or "").strip() for v in (reception_scenario or []) if str(v or "").strip()]
+    satisfaction_change_norms = [str(v or "").strip() for v in (satisfaction_change or []) if str(v or "").strip()]
+    tag_id_norms = [str(v or "").strip() for v in (tag_id or []) if str(v or "").strip()]
     cid_norm = (cid or "").strip()
+
+    # rounds (non-system message count) range filter
+    def _parse_nonneg_int(s: str) -> int | None:
+        s = (s or "").strip()
+        if not s:
+            return None
+        try:
+            v = int(float(s))
+        except Exception:
+            return None
+        return max(0, v)
+
+    min_rounds_i = _parse_nonneg_int(min_rounds)
+    max_rounds_i = _parse_nonneg_int(max_rounds)
+    if min_rounds_i is not None and max_rounds_i is not None and max_rounds_i < min_rounds_i:
+        min_rounds_i, max_rounds_i = max_rounds_i, min_rounds_i
+    rounds_expr = func.coalesce(msg_cnt_sq.c.msg_cnt, 0)
+    if min_rounds_i is not None:
+        conv_where.append(rounds_expr >= min_rounds_i)
+    if max_rounds_i is not None:
+        conv_where.append(rounds_expr <= max_rounds_i)
     
     # Tag ID filter via ConversationTagHit AND ManualTagBinding
     # This filter is independent of ConversationAnalysis conditions
-    if tag_id_norm:
+    if tag_id_norms:
+        tag_ids: list[int] = []
         try:
-            tag_id_int = int(tag_id_norm)
+            for s in tag_id_norms:
+                try:
+                    tag_ids.append(int(s))
+                except Exception:
+                    continue
+            tag_ids = [tid for tid in tag_ids if tid > 0]
+        except Exception:
+            tag_ids = []
+
+        if tag_ids:
             # Get latest analysis per conversation that has this tag (AI auto hit)
             latest_subq = (
                 select(func.max(ConversationAnalysis.id).label("analysis_id"))
@@ -2570,14 +2907,14 @@ def conversations_list(
                 .select_from(ConversationTagHit)
                 .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
                 .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
-                .where(ConversationTagHit.tag_id == tag_id_int)
+                .where(ConversationTagHit.tag_id.in_(tag_ids))
                 .distinct()
             )
             
             # Also check ManualTagBinding (manually added tags by admin/supervisor)
             manual_tag_subq = (
                 select(ManualTagBinding.conversation_id)
-                .where(ManualTagBinding.tag_id == tag_id_int)
+                .where(ManualTagBinding.tag_id.in_(tag_ids))
                 .distinct()
             )
             
@@ -2586,21 +2923,15 @@ def conversations_list(
                 Conversation.id.in_(ai_tag_hit_subq),
                 Conversation.id.in_(manual_tag_subq)
             ))
-        except Exception:
-            pass
     
-    if tag_norm or only_flagged_bool or reception_scenario_norm or satisfaction_change_norm:
+    if only_flagged_bool or reception_scenario_norms or satisfaction_change_norms:
         a_where = []
         if only_flagged_bool:
             a_where.append(ConversationAnalysis.flag_for_review == True)
-        if tag_norm:
-            a_where.append(
-                ConversationAnalysis.day_summary.contains(tag_norm)
-            )
-        if reception_scenario_norm:
-            a_where.append(ConversationAnalysis.reception_scenario == reception_scenario_norm)
-        if satisfaction_change_norm:
-            a_where.append(ConversationAnalysis.satisfaction_change == satisfaction_change_norm)
+        if reception_scenario_norms:
+            a_where.append(ConversationAnalysis.reception_scenario.in_(reception_scenario_norms))
+        if satisfaction_change_norms:
+            a_where.append(ConversationAnalysis.satisfaction_change.in_(satisfaction_change_norms))
         
         subq = select(ConversationAnalysis.conversation_id).where(*a_where).distinct()
         conv_where.append(Conversation.id.in_(subq))
@@ -2642,9 +2973,11 @@ def conversations_list(
     # total count for pagination
     # 注意：如果使用了时间筛选（display_ts），计数查询也需要 join customer_ts_sq
     count_q = select(func.count(Conversation.id))
-    if start_dt or end_dt:
+    if cur_start or cur_end_excl:
         # 时间筛选依赖 display_ts，需要 join customer_ts_sq
         count_q = count_q.outerjoin(customer_ts_sq, customer_ts_sq.c.cid == Conversation.id)
+    if min_rounds_i is not None or max_rounds_i is not None:
+        count_q = count_q.outerjoin(msg_cnt_sq, msg_cnt_sq.c.cid == Conversation.id)
     if conv_where:
         count_q = count_q.where(*conv_where)
     
@@ -2917,53 +3250,103 @@ def conversations_list(
         tag_definitions=tag_definitions,
         tags_by_conv=tags_by_conv,
         # 聊天接待页需要“按客服账号筛选”，所以所有角色都回显当前选择。
-        agent_id=agent_id_int,
-        ext_agent_account=ext_agent_account_norm,
-        tag=tag_norm,
+        agent_ids=agent_ids,
+        ext_agent_accounts_selected=ext_agent_account_norms,
         match=match_norm,
-        start=start or "",
-        end=end or "",
+        time_mode=time_mode_norm,
+        start=str(period.get("display_start") or ""),
+        end=str(period.get("display_end") or ""),
+        period_label=str(period.get("cur_label") or ""),
+        min_rounds=str(min_rounds_i) if min_rounds_i is not None else "",
+        max_rounds=str(max_rounds_i) if max_rounds_i is not None else "",
         only_flagged=only_flagged_bool,
-        reception_scenario=reception_scenario_norm,
-        satisfaction_change=satisfaction_change_norm,
-        tag_id=tag_id_norm,
+        reception_scenarios=reception_scenario_norms,
+        satisfaction_changes=satisfaction_change_norms,
+        tag_ids=tag_id_norms,
         cid=cid_norm,
         page=page,
         total=total,
         total_pages=total_pages,
         page_size=page_size,
         has_analysis=has_analysis_norm,
-        base_qs=_build_conversations_base_qs(agent_id=agent_id_int, ext_agent_account=ext_agent_account_norm, tag=tag_norm, match=match_norm, start=start or "", end=end or "", only_flagged=only_flagged_bool, reception_scenario=reception_scenario_norm, satisfaction_change=satisfaction_change_norm, tag_id=tag_id_norm, cid=cid_norm, has_analysis=has_analysis_norm),
+        time_modes=[
+            ("all", "汇总"),
+            ("last_year", "年"),
+            ("last_quarter", "季度"),
+            ("last_month", "月"),
+            ("last_week", "周"),
+            ("yesterday", "日"),
+            ("custom", "自定义"),
+        ],
+        base_qs=_build_conversations_base_qs(
+            agent_ids=agent_ids,
+            ext_agent_accounts=ext_agent_account_norms,
+            match=match_norm,
+            time_mode=time_mode_norm,
+            start=str(period.get("display_start") or ""),
+            end=str(period.get("display_end") or ""),
+            min_rounds=str(min_rounds_i) if min_rounds_i is not None else "",
+            max_rounds=str(max_rounds_i) if max_rounds_i is not None else "",
+            only_flagged=only_flagged_bool,
+            reception_scenarios=reception_scenario_norms,
+            satisfaction_changes=satisfaction_change_norms,
+            tag_ids=tag_id_norms,
+            cid=cid_norm,
+            has_analysis=has_analysis_norm,
+        ),
     )
 
 
-def _build_conversations_base_qs(agent_id: int | None, ext_agent_account: str, tag: str, match: str, start: str, end: str, only_flagged: bool, reception_scenario: str = "", satisfaction_change: str = "", tag_id: str = "", cid: str = "", has_analysis: str = "") -> str:
+def _build_conversations_base_qs(
+    agent_ids: list[int],
+    ext_agent_accounts: list[str],
+    match: str,
+    time_mode: str,
+    start: str,
+    end: str,
+    only_flagged: bool,
+    min_rounds: str = "",
+    max_rounds: str = "",
+    reception_scenarios: list[str] | None = None,
+    satisfaction_changes: list[str] | None = None,
+    tag_ids: list[str] | None = None,
+    cid: str = "",
+    has_analysis: str = "",
+) -> str:
     parts: list[str] = []
-    if agent_id:
-        parts.append(f"agent_id={agent_id}")
-    if ext_agent_account:
+    if agent_ids:
+        for uid in agent_ids:
+            parts.append(f"agent_id={uid}")
+    if ext_agent_accounts:
         from urllib.parse import quote_plus
-        parts.append(f"ext_agent_account={quote_plus(ext_agent_account)}")
-    if tag:
-        from urllib.parse import quote_plus
-        parts.append(f"tag={quote_plus(tag)}")
+        for acc in ext_agent_accounts:
+            parts.append(f"ext_agent_account={quote_plus(acc)}")
     if match:
         from urllib.parse import quote_plus
         parts.append(f"match={quote_plus(match)}")
+    if time_mode and time_mode != "all":
+        parts.append(f"time_mode={time_mode}")
     if start:
         parts.append(f"start={start}")
     if end:
         parts.append(f"end={end}")
+    if min_rounds:
+        parts.append(f"min_rounds={min_rounds}")
+    if max_rounds:
+        parts.append(f"max_rounds={max_rounds}")
     if only_flagged:
         parts.append("only_flagged=1")
-    if reception_scenario:
+    if reception_scenarios:
         from urllib.parse import quote_plus
-        parts.append(f"reception_scenario={quote_plus(reception_scenario)}")
-    if satisfaction_change:
+        for val in reception_scenarios:
+            parts.append(f"reception_scenario={quote_plus(val)}")
+    if satisfaction_changes:
         from urllib.parse import quote_plus
-        parts.append(f"satisfaction_change={quote_plus(satisfaction_change)}")
-    if tag_id:
-        parts.append(f"tag_id={tag_id}")
+        for val in satisfaction_changes:
+            parts.append(f"satisfaction_change={quote_plus(val)}")
+    if tag_ids:
+        for tid in tag_ids:
+            parts.append(f"tag_id={tid}")
     if cid:
         parts.append(f"cid={cid}")
     if has_analysis:
@@ -4582,6 +4965,279 @@ def reports(
     )
 
 
+def _tag_report_parse_date(d: str | None) -> datetime | None:
+    if not d:
+        return None
+    d = d.strip()
+    if not d:
+        return None
+    try:
+        y, m, day = [int(x) for x in d.split("-")]
+        return datetime(y, m, day)
+    except Exception:
+        return None
+
+
+def _tag_report_normalize_range(start_dt: datetime | None, end_dt: datetime | None) -> tuple[datetime | None, datetime | None]:
+    if not start_dt and not end_dt:
+        return None, None
+    if start_dt and not end_dt:
+        end_dt = start_dt
+    if end_dt and not start_dt:
+        start_dt = end_dt
+    if start_dt and end_dt and start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
+    return start_dt, end_dt
+
+
+def _tag_report_week_bounds(d: datetime) -> tuple[datetime, datetime]:
+    monday = d - timedelta(days=d.weekday())
+    sunday = monday + timedelta(days=6)
+    return datetime(monday.year, monday.month, monday.day), datetime(sunday.year, sunday.month, sunday.day)
+
+
+def _tag_report_month_bounds(d: datetime) -> tuple[datetime, datetime]:
+    start = datetime(d.year, d.month, 1)
+    if d.month == 12:
+        end = datetime(d.year, 12, 31)
+    else:
+        end = datetime(d.year, d.month + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _tag_report_quarter_bounds(d: datetime) -> tuple[datetime, datetime]:
+    quarter = (d.month - 1) // 3 + 1
+    start_month = (quarter - 1) * 3 + 1
+    start = datetime(d.year, start_month, 1)
+    end_month = start_month + 2
+    if end_month == 12:
+        end = datetime(d.year, 12, 31)
+    else:
+        end = datetime(d.year, end_month + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _tag_report_year_bounds(d: datetime) -> tuple[datetime, datetime]:
+    return datetime(d.year, 1, 1), datetime(d.year, 12, 31)
+
+
+def _tag_report_shift_year_safe(d: datetime, years: int) -> datetime:
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:
+        # Handle Feb 29 for non-leap years by falling back to Feb 28
+        return d.replace(year=d.year + years, day=28)
+
+
+def _build_tag_report_period(
+    time_mode: str | None,
+    start: str | None,
+    end: str | None,
+    yoy: bool,
+) -> dict[str, object]:
+    mode = (time_mode or "last_week").strip() or "last_week"
+    start_dt = _tag_report_parse_date(start)
+    end_dt = _tag_report_parse_date(end)
+    now = datetime.utcnow()
+    today = datetime(now.year, now.month, now.day)
+
+    def _date_str(d: datetime | None) -> str:
+        return d.date().isoformat() if d else ""
+
+    start_dt, end_dt = _tag_report_normalize_range(start_dt, end_dt)
+    anchor = start_dt or end_dt
+
+    if mode == "all":
+        cur_start = None
+        cur_end_excl = None
+        cur_label = "汇总（全部）"
+        prev_start = None
+        prev_end_excl = None
+        prev_label = ""
+        yoy_start = None
+        yoy_end_excl = None
+        yoy_label = ""
+    elif mode == "yesterday":
+        if anchor:
+            cur_start = anchor
+            cur_end_excl = anchor + timedelta(days=1)
+            cur_label = f"日 ({_date_str(cur_start)})"
+        else:
+            cur_start = today - timedelta(days=1)
+            cur_end_excl = today
+            cur_label = f"昨天 ({_date_str(cur_start)})"
+
+        prev_start = cur_start - timedelta(days=1)
+        prev_end_excl = cur_start
+        prev_label = f"前一日 ({_date_str(prev_start)})"
+
+        if yoy:
+            yoy_start = _tag_report_shift_year_safe(cur_start, -1)
+            yoy_end_excl = yoy_start + timedelta(days=1)
+            yoy_label = f"去年同日 ({_date_str(yoy_start)})"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+    elif mode == "last_week":
+        if anchor:
+            week_start, week_end = _tag_report_week_bounds(anchor)
+            cur_label = f"周 ({_date_str(week_start)} ~ {_date_str(week_end)})"
+        else:
+            days_since_monday = today.weekday()
+            this_monday = today - timedelta(days=days_since_monday)
+            week_start = this_monday - timedelta(days=7)
+            week_end = this_monday - timedelta(days=1)
+            cur_label = f"上周 ({_date_str(week_start)} ~ {_date_str(week_end)})"
+
+        cur_start = week_start
+        cur_end_excl = week_end + timedelta(days=1)
+
+        prev_start = week_start - timedelta(days=7)
+        prev_end_excl = week_start
+        prev_label = f"{_date_str(prev_start)} ~ {_date_str(prev_end_excl - timedelta(days=1))}"
+
+        if yoy:
+            yoy_start = _tag_report_shift_year_safe(week_start, -1)
+            yoy_end = _tag_report_shift_year_safe(week_end, -1)
+            yoy_end_excl = yoy_end + timedelta(days=1)
+            yoy_label = f"{_date_str(yoy_start)} ~ {_date_str(yoy_end)}"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+    elif mode == "last_month":
+        if anchor:
+            month_start, month_end = _tag_report_month_bounds(anchor)
+            cur_label = f"月 ({_date_str(month_start)} ~ {_date_str(month_end)})"
+        else:
+            this_month_first = datetime(today.year, today.month, 1)
+            last_month_last = this_month_first - timedelta(days=1)
+            month_start, month_end = _tag_report_month_bounds(last_month_last)
+            cur_label = f"上月 ({_date_str(month_start)} ~ {_date_str(month_end)})"
+
+        cur_start = month_start
+        cur_end_excl = month_end + timedelta(days=1)
+
+        prev_anchor = month_start - timedelta(days=1)
+        prev_start, prev_end = _tag_report_month_bounds(prev_anchor)
+        prev_end_excl = prev_end + timedelta(days=1)
+        prev_label = f"{_date_str(prev_start)} ~ {_date_str(prev_end)}"
+
+        if yoy:
+            yoy_anchor = datetime(month_start.year - 1, month_start.month, 1)
+            yoy_start, yoy_end = _tag_report_month_bounds(yoy_anchor)
+            yoy_end_excl = yoy_end + timedelta(days=1)
+            yoy_label = f"{_date_str(yoy_start)} ~ {_date_str(yoy_end)}"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+    elif mode == "last_quarter":
+        if anchor:
+            quarter_start, quarter_end = _tag_report_quarter_bounds(anchor)
+            cur_label = f"季度 ({_date_str(quarter_start)} ~ {_date_str(quarter_end)})"
+        else:
+            current_quarter = (today.month - 1) // 3 + 1
+            if current_quarter == 1:
+                quarter_anchor = datetime(today.year - 1, 12, 31)
+            else:
+                quarter_anchor = datetime(today.year, (current_quarter - 1) * 3, 1) - timedelta(days=1)
+            quarter_start, quarter_end = _tag_report_quarter_bounds(quarter_anchor)
+            cur_label = f"上季度 ({_date_str(quarter_start)} ~ {_date_str(quarter_end)})"
+
+        cur_start = quarter_start
+        cur_end_excl = quarter_end + timedelta(days=1)
+
+        prev_anchor = quarter_start - timedelta(days=1)
+        prev_start, prev_end = _tag_report_quarter_bounds(prev_anchor)
+        prev_end_excl = prev_end + timedelta(days=1)
+        prev_label = f"{_date_str(prev_start)} ~ {_date_str(prev_end)}"
+
+        if yoy:
+            yoy_anchor = datetime(quarter_start.year - 1, quarter_start.month, 1)
+            yoy_start, yoy_end = _tag_report_quarter_bounds(yoy_anchor)
+            yoy_end_excl = yoy_end + timedelta(days=1)
+            yoy_label = f"{_date_str(yoy_start)} ~ {_date_str(yoy_end)}"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+    elif mode == "last_year":
+        if anchor:
+            year_start, year_end = _tag_report_year_bounds(anchor)
+            cur_label = f"年 ({year_start.year})"
+        else:
+            year_start = datetime(today.year - 1, 1, 1)
+            year_end = datetime(today.year - 1, 12, 31)
+            cur_label = f"去年 ({year_start.year})"
+
+        cur_start = year_start
+        cur_end_excl = year_end + timedelta(days=1)
+
+        prev_start = datetime(year_start.year - 1, 1, 1)
+        prev_end = datetime(year_start.year - 1, 12, 31)
+        prev_end_excl = prev_end + timedelta(days=1)
+        prev_label = f"{prev_start.year}"
+
+        if yoy:
+            yoy_start = prev_start
+            yoy_end_excl = prev_end_excl
+            yoy_label = f"{prev_start.year}"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+    else:
+        if not start_dt and not end_dt:
+            end_dt = today - timedelta(days=1)
+            start_dt = end_dt - timedelta(days=6)
+        start_dt, end_dt = _tag_report_normalize_range(start_dt, end_dt)
+
+        cur_start = start_dt
+        cur_end_excl = (end_dt + timedelta(days=1)) if end_dt else None
+        cur_label = f"{_date_str(start_dt)} ~ {_date_str(end_dt)}" if (start_dt and end_dt) else "自定义"
+
+        if start_dt and end_dt:
+            days = (end_dt - start_dt).days + 1
+            prev_end = start_dt - timedelta(days=1)
+            prev_start = prev_end - timedelta(days=days - 1)
+            prev_end_excl = prev_end + timedelta(days=1)
+            prev_label = f"{_date_str(prev_start)} ~ {_date_str(prev_end)}"
+        else:
+            prev_start = None
+            prev_end_excl = None
+            prev_label = ""
+
+        if yoy and start_dt and end_dt:
+            yoy_start = _tag_report_shift_year_safe(start_dt, -1)
+            yoy_end = _tag_report_shift_year_safe(end_dt, -1)
+            yoy_end_excl = yoy_end + timedelta(days=1)
+            yoy_label = f"{_date_str(yoy_start)} ~ {_date_str(yoy_end)}"
+        else:
+            yoy_start = None
+            yoy_end_excl = None
+            yoy_label = ""
+
+    display_start = _date_str(cur_start)
+    display_end = _date_str(cur_end_excl - timedelta(days=1)) if cur_end_excl else ""
+
+    return {
+        "mode": mode,
+        "cur_start": cur_start,
+        "cur_end_excl": cur_end_excl,
+        "prev_start": prev_start,
+        "prev_end_excl": prev_end_excl,
+        "yoy_start": yoy_start,
+        "yoy_end_excl": yoy_end_excl,
+        "cur_label": cur_label,
+        "prev_label": prev_label,
+        "yoy_label": yoy_label,
+        "display_start": display_start,
+        "display_end": display_end,
+    }
+
+
 @app.get("/reports/tags", response_class=HTMLResponse)
 def tags_report_page(
     request: Request,
@@ -4594,286 +5250,9 @@ def tags_report_page(
     agent_user_id: str | None = None,
     yoy: int | None = None,
 ):
-    """标签报表。
+    """标签报表（数据透视表）。"""
 
-    统计口径：每个对话只取最新一条 ConversationAnalysis 的 ConversationTagHit。
-    """
-
-    from sqlalchemy import func
-
-    def _parse_date(d: str | None):
-        if not d:
-            return None
-        d = d.strip()
-        if not d:
-            return None
-        try:
-            y, m, day = [int(x) for x in d.split("-")]
-            return datetime(y, m, day)
-        except Exception:
-            return None
-
-    mode = (time_mode or "last_week").strip() or "last_week"  # 默认上周
-    start_dt = _parse_date(start)
-    end_dt = _parse_date(end)
-    now = datetime.utcnow()
-    today = datetime(now.year, now.month, now.day)
-
-    def _normalize_range(start_dt, end_dt):
-        if not start_dt and not end_dt:
-            return None, None
-        if start_dt and not end_dt:
-            end_dt = start_dt
-        if end_dt and not start_dt:
-            start_dt = end_dt
-        if start_dt and end_dt and start_dt > end_dt:
-            start_dt, end_dt = end_dt, start_dt
-        return start_dt, end_dt
-
-    # 计算时间范围
-    if mode == "all":
-        # 汇总：全部数据
-        cur_start = None
-        cur_end_excl = None
-        cur_label = "汇总（全部）"
-        prev_start = None
-        prev_end_excl = None
-        prev_label = ""
-        yoy_start = None
-        yoy_end_excl = None
-        yoy_label = ""
-    elif mode == "yesterday":
-        # 昨天
-        start_dt = today - timedelta(days=1)
-        end_dt = today - timedelta(days=1)
-        cur_start = start_dt
-        cur_end_excl = today
-        cur_label = f"昨天 ({start_dt.date().isoformat()})"
-        
-        # 环比：前天
-        prev_start = start_dt - timedelta(days=1)
-        prev_end_excl = start_dt
-        prev_label = f"前天 ({prev_start.date().isoformat()})"
-        
-        # 同比：去年昨天
-        if yoy:
-            yoy_start = datetime(start_dt.year - 1, start_dt.month, start_dt.day)
-            yoy_end_excl = datetime(end_dt.year - 1, end_dt.month, end_dt.day) + timedelta(days=1)
-            yoy_label = f"去年同日 ({yoy_start.date().isoformat()})"
-        else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
-    elif mode == "last_week":
-        # 周：用用户选择的日期定位到当周；未提供时默认上周（周一到周日）
-        start_dt, end_dt = _normalize_range(start_dt, end_dt)
-        if start_dt or end_dt:
-            anchor = start_dt or end_dt
-            week_start, week_end = _week_bounds(anchor)
-            cur_start = week_start
-            cur_end_excl = week_end + timedelta(days=1)
-            cur_label = f"周 ({week_start.date().isoformat()} ~ {week_end.date().isoformat()})"
-
-            prev_start = week_start - timedelta(days=7)
-            prev_end_excl = week_start
-            prev_label = f"{prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()}"
-
-            if yoy:
-                yoy_start = _shift_year_safe(week_start, -1)
-                yoy_end = _shift_year_safe(week_end, -1)
-                yoy_end_excl = yoy_end + timedelta(days=1)
-                yoy_label = f"{yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()}"
-            else:
-                yoy_start = None
-                yoy_end_excl = None
-                yoy_label = ""
-        else:
-            # 上周（周一到周日）
-            # 计算本周一
-            days_since_monday = today.weekday()  # 0=周一, 6=周日
-            this_monday = today - timedelta(days=days_since_monday)
-            # 上周一到上周日
-            last_monday = this_monday - timedelta(days=7)
-            last_sunday = this_monday - timedelta(days=1)
-            
-            start_dt = last_monday
-            end_dt = last_sunday
-            cur_start = start_dt
-            cur_end_excl = end_dt + timedelta(days=1)
-            cur_label = f"上周 ({start_dt.date().isoformat()} ~ {end_dt.date().isoformat()})"
-            
-            # 环比：上上周
-            prev_start = start_dt - timedelta(days=7)
-            prev_end_excl = start_dt
-            prev_label = f"上上周 ({prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()})"
-            
-            # 同比：去年上周
-            if yoy:
-                yoy_start = datetime(start_dt.year - 1, start_dt.month, start_dt.day)
-                yoy_end = datetime(end_dt.year - 1, end_dt.month, end_dt.day)
-                yoy_end_excl = yoy_end + timedelta(days=1)
-                yoy_label = f"去年同周 ({yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()})"
-            else:
-                yoy_start = None
-                yoy_end_excl = None
-                yoy_label = ""
-    elif mode == "last_month":
-        # 上月（1号到最后一天）
-        # 本月1号
-        this_month_first = datetime(today.year, today.month, 1)
-        # 上月1号
-        if today.month == 1:
-            last_month_first = datetime(today.year - 1, 12, 1)
-        else:
-            last_month_first = datetime(today.year, today.month - 1, 1)
-        # 上月最后一天 = 本月1号 - 1天
-        last_month_last = this_month_first - timedelta(days=1)
-        
-        start_dt = last_month_first
-        end_dt = last_month_last
-        cur_start = start_dt
-        cur_end_excl = end_dt + timedelta(days=1)
-        cur_label = f"上月 ({start_dt.date().isoformat()} ~ {end_dt.date().isoformat()})"
-        
-        # 环比：上上月
-        if last_month_first.month == 1:
-            prev_month_first = datetime(last_month_first.year - 1, 12, 1)
-        else:
-            prev_month_first = datetime(last_month_first.year, last_month_first.month - 1, 1)
-        prev_start = prev_month_first
-        prev_end_excl = last_month_first
-        prev_label = f"上上月 ({prev_start.date().isoformat()} ~ {(prev_end_excl - timedelta(days=1)).date().isoformat()})"
-        
-        # 同比：去年上月
-        if yoy:
-            yoy_start = datetime(start_dt.year - 1, start_dt.month, 1)
-            # 去年上月最后一天
-            if start_dt.month == 12:
-                yoy_end = datetime(start_dt.year, 1, 1) - timedelta(days=1)
-            else:
-                yoy_end = datetime(start_dt.year - 1, start_dt.month + 1, 1) - timedelta(days=1)
-            yoy_end_excl = yoy_end + timedelta(days=1)
-            yoy_label = f"去年同月 ({yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()})"
-        else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
-    elif mode == "last_quarter":
-        # 上季度
-        # 计算当前季度
-        current_quarter = (today.month - 1) // 3 + 1
-        # 上季度
-        if current_quarter == 1:
-            last_quarter = 4
-            last_quarter_year = today.year - 1
-        else:
-            last_quarter = current_quarter - 1
-            last_quarter_year = today.year
-        
-        # 上季度第一个月
-        last_quarter_first_month = (last_quarter - 1) * 3 + 1
-        start_dt = datetime(last_quarter_year, last_quarter_first_month, 1)
-        
-        # 上季度最后一个月的最后一天
-        last_quarter_last_month = last_quarter_first_month + 2
-        if last_quarter_last_month == 12:
-            end_dt = datetime(last_quarter_year, 12, 31)
-        else:
-            end_dt = datetime(last_quarter_year, last_quarter_last_month + 1, 1) - timedelta(days=1)
-        
-        cur_start = start_dt
-        cur_end_excl = end_dt + timedelta(days=1)
-        cur_label = f"上季度 ({start_dt.date().isoformat()} ~ {end_dt.date().isoformat()})"
-        
-        # 环比：上上季度
-        if last_quarter == 1:
-            prev_quarter = 4
-            prev_quarter_year = last_quarter_year - 1
-        else:
-            prev_quarter = last_quarter - 1
-            prev_quarter_year = last_quarter_year
-        
-        prev_quarter_first_month = (prev_quarter - 1) * 3 + 1
-        prev_start = datetime(prev_quarter_year, prev_quarter_first_month, 1)
-        prev_quarter_last_month = prev_quarter_first_month + 2
-        if prev_quarter_last_month == 12:
-            prev_end = datetime(prev_quarter_year, 12, 31)
-        else:
-            prev_end = datetime(prev_quarter_year, prev_quarter_last_month + 1, 1) - timedelta(days=1)
-        prev_end_excl = prev_end + timedelta(days=1)
-        prev_label = f"上上季度 ({prev_start.date().isoformat()} ~ {prev_end.date().isoformat()})"
-        
-        # 同比：去年上季度
-        if yoy:
-            yoy_start = datetime(start_dt.year - 1, start_dt.month, 1)
-            yoy_last_month = last_quarter_first_month + 2
-            if yoy_last_month == 12:
-                yoy_end = datetime(start_dt.year - 1, 12, 31)
-            else:
-                yoy_end = datetime(start_dt.year - 1, yoy_last_month + 1, 1) - timedelta(days=1)
-            yoy_end_excl = yoy_end + timedelta(days=1)
-            yoy_label = f"去年同季度 ({yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()})"
-        else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
-    elif mode == "last_year":
-        # 去年（1月1日到12月31日）
-        last_year = today.year - 1
-        start_dt = datetime(last_year, 1, 1)
-        end_dt = datetime(last_year, 12, 31)
-        cur_start = start_dt
-        cur_end_excl = end_dt + timedelta(days=1)
-        cur_label = f"去年 ({last_year})"
-        
-        # 环比：前年
-        prev_start = datetime(last_year - 1, 1, 1)
-        prev_end = datetime(last_year - 1, 12, 31)
-        prev_end_excl = prev_end + timedelta(days=1)
-        prev_label = f"前年 ({last_year - 1})"
-        
-        # 同比：大前年
-        if yoy:
-            yoy_start = datetime(last_year - 1, 1, 1)
-            yoy_end = datetime(last_year - 1, 12, 31)
-            yoy_end_excl = yoy_end + timedelta(days=1)
-            yoy_label = f"大前年 ({last_year - 1})"
-        else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
-    else:
-        # custom: 自定义日期范围
-        # 如果用户没有提供日期，默认最近7天
-        if not start_dt and not end_dt:
-            end_dt = today - timedelta(days=1)  # 默认到昨天
-            start_dt = end_dt - timedelta(days=6)  # 最近7天
-        start_dt, end_dt = _normalize_range(start_dt, end_dt)
-
-        cur_start = start_dt
-        cur_end_excl = (end_dt + timedelta(days=1)) if end_dt else None
-        cur_label = f"{start_dt.date().isoformat()} ~ {end_dt.date().isoformat()}" if (start_dt and end_dt) else "自定义"
-
-        if start_dt and end_dt:
-            days = (end_dt - start_dt).days + 1
-            prev_end = start_dt - timedelta(days=1)
-            prev_start = prev_end - timedelta(days=days - 1)
-            prev_end_excl = prev_end + timedelta(days=1)
-            prev_label = f"{prev_start.date().isoformat()} ~ {prev_end.date().isoformat()}"
-        else:
-            prev_start = None
-            prev_end_excl = None
-            prev_label = ""
-
-        if yoy and start_dt and end_dt:
-            yoy_start = datetime(start_dt.year - 1, start_dt.month, start_dt.day)
-            yoy_end = datetime(end_dt.year - 1, end_dt.month, end_dt.day)
-            yoy_end_excl = yoy_end + timedelta(days=1)
-            yoy_label = f"{yoy_start.date().isoformat()} ~ {yoy_end.date().isoformat()}"
-        else:
-            yoy_start = None
-            yoy_end_excl = None
-            yoy_label = ""
+    period = _build_tag_report_period(time_mode, start, end, bool(yoy))
 
     platform_f = (platform or "").strip()
     agent_user_id_int = None
@@ -4882,11 +5261,9 @@ def tags_report_page(
     except Exception:
         agent_user_id_int = None
 
-    # Agent role: only see self
     if user.role == Role.agent:
         agent_user_id_int = user.id
 
-    # Options
     raw_platforms = session.exec(select(Conversation.platform)).all()
     platform_options = sorted(
         {
@@ -4902,234 +5279,50 @@ def tags_report_page(
         if u.role in (Role.agent, Role.supervisor) and getattr(u, "is_active", True)
     ]
 
-    latest_subq = (
-        select(func.max(ConversationAnalysis.id).label("analysis_id"))
-        .group_by(ConversationAnalysis.conversation_id)
-    ).subquery()
-
-    # Real-time mapping via AgentBinding if exists
-    binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
-
-    base_stmt = (
-        select(
-            TagDefinition.id.label("tag_id"),
-            Conversation.platform.label("platform"),
-            binding_user_id.label("agent_user_id"),
-            func.count(func.distinct(Conversation.id)).label("cnt"),
-        )
-        .select_from(ConversationTagHit)
-        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
-        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
-        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
-        .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
-        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+    cats = session.exec(
+        select(TagCategory)
+        .where(TagCategory.is_active == True)
+        .order_by(TagCategory.sort_order.asc(), TagCategory.id.asc())
+    ).all()
+    tags = session.exec(
+        select(TagDefinition)
         .where(TagDefinition.is_active == True)
-    )
-
-    def _apply_filters(stmt, start_dt, end_excl):
-        if start_dt:
-            stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) >= start_dt)
-        if end_excl:
-            stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) < end_excl)
-        if platform_f:
-            stmt = stmt.where(Conversation.platform == platform_f)
-        if agent_user_id_int:
-            stmt = stmt.where(binding_user_id == agent_user_id_int)
-        return stmt
-
-    cur_rows = session.exec(_apply_filters(base_stmt, cur_start, cur_end_excl).group_by(TagDefinition.id, Conversation.platform, binding_user_id)).all()
-    prev_rows = session.exec(_apply_filters(base_stmt, prev_start, prev_end_excl).group_by(TagDefinition.id, Conversation.platform, binding_user_id)).all() if prev_start else []
-    yoy_rows = session.exec(_apply_filters(base_stmt, yoy_start, yoy_end_excl).group_by(TagDefinition.id, Conversation.platform, binding_user_id)).all() if yoy_start else []
-
-    def _index(rows):
-        idx = {}
-        for tag_id, plat, uid, cnt in rows:
-            idx[(int(tag_id), str(plat or ""), int(uid or 0))] = int(cnt or 0)
-        return idx
-
-    cur_idx = _index(cur_rows)
-    prev_idx = _index(prev_rows)
-    yoy_idx = _index(yoy_rows)
-
-    # 查询总接待量（Conversation 总数）
-    # 基础查询语句：统计对话数量，按平台和客服分组
-    total_conv_base_stmt = (
-        select(
-            Conversation.platform.label("platform"),
-            binding_user_id.label("agent_user_id"),
-            func.count(func.distinct(Conversation.id)).label("cnt"),
-        )
-        .select_from(Conversation)
-        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
-    )
-
-    # 应用相同的筛选条件
-    cur_total_rows = session.exec(_apply_filters(total_conv_base_stmt, cur_start, cur_end_excl).group_by(Conversation.platform, binding_user_id)).all()
-    prev_total_rows = session.exec(_apply_filters(total_conv_base_stmt, prev_start, prev_end_excl).group_by(Conversation.platform, binding_user_id)).all() if prev_start else []
-    yoy_total_rows = session.exec(_apply_filters(total_conv_base_stmt, yoy_start, yoy_end_excl).group_by(Conversation.platform, binding_user_id)).all() if yoy_start else []
-
-    def _index_total(rows):
-        """将总接待量索引化: (platform, agent_user_id) -> count"""
-        idx = {}
-        for plat, uid, cnt in rows:
-            idx[(str(plat or ""), int(uid or 0))] = int(cnt or 0)
-        return idx
-
-    cur_total_idx = _index_total(cur_total_rows)
-    prev_total_idx = _index_total(prev_total_rows)
-    yoy_total_idx = _index_total(yoy_total_rows)
-
-    cats = session.exec(select(TagCategory).where(TagCategory.is_active == True).order_by(TagCategory.sort_order.asc(), TagCategory.id.asc())).all()
-    tags = session.exec(select(TagDefinition).where(TagDefinition.is_active == True).order_by(TagDefinition.category_id.asc(), TagDefinition.sort_order.asc(), TagDefinition.id.asc())).all()
+        .order_by(TagDefinition.category_id.asc(), TagDefinition.sort_order.asc(), TagDefinition.id.asc())
+    ).all()
     cat_by_id = {int(c.id): c for c in cats if c.id}
-    user_by_id = {u.id: u for u in users if u.id}
 
-    platforms = sorted({k[1] for k in cur_idx.keys()} | {k[1] for k in prev_idx.keys()} | {k[1] for k in yoy_idx.keys()})
+    tag_meta = [
+        {
+            "id": int(t.id),
+            "name": t.name,
+            "category_id": int(t.category_id or 0),
+            "category_name": (cat_by_id.get(int(t.category_id or 0)).name if cat_by_id.get(int(t.category_id or 0)) else "未分类"),
+            "standard": (t.standard or "") or (t.description or "") or "未配置",
+            "sort_order": int(t.sort_order or 0),
+        }
+        for t in tags
+        if t.id
+    ]
 
-    def _fmt_delta(cur: int, base: int) -> str:
-        if base <= 0:
-            return "—" if cur <= 0 else f"+{cur}"
-        diff = cur - base
-        pct = (diff / base) * 100.0
-        sign = "+" if diff >= 0 else ""
-        return f"{sign}{diff} ({sign}{pct:.0f}%)"
+    category_meta = [
+        {
+            "id": int(c.id),
+            "name": c.name,
+            "sort_order": int(c.sort_order or 0),
+        }
+        for c in cats
+        if c.id
+    ]
 
-    def _fmt_ratio(tag_count: int, total_count: int) -> str:
-        """格式化标签占比"""
-        if total_count <= 0:
-            return "—"
-        ratio = (tag_count / total_count) * 100.0
-        return f"{ratio:.2f}%"
-
-    table_rows: list[dict[str, object]] = []
-
-    def _add_group(group_id: str, group_label: str, plat: str | None, uid: int | None, level: int, parent_id: str | None = None):
-        # Calculate sums for the header row
-        key_uid = int(uid or 0)
-        total_cur = 0
-        total_prev = 0
-        total_yoy = 0
-        
-        # 计算当前分组的总接待量
-        if plat == "":
-            # 汇总：所有平台和用户
-            total_conv_cur = sum(cur_total_idx.values())
-            total_conv_prev = sum(prev_total_idx.values()) if prev_start else 0
-            total_conv_yoy = sum(yoy_total_idx.values()) if yoy_start else 0
-        elif uid == 0:
-            # 特定平台，所有用户
-            total_conv_cur = sum(v for k, v in cur_total_idx.items() if k[0] == plat)
-            total_conv_prev = sum(v for k, v in prev_total_idx.items() if k[0] == plat) if prev_start else 0
-            total_conv_yoy = sum(v for k, v in yoy_total_idx.items() if k[0] == plat) if yoy_start else 0
-        else:
-            # 特定平台和用户
-            total_conv_cur = cur_total_idx.get((plat or "", key_uid), 0)
-            total_conv_prev = prev_total_idx.get((plat or "", key_uid), 0) if prev_start else 0
-            total_conv_yoy = yoy_total_idx.get((plat or "", key_uid), 0) if yoy_start else 0
-        
-        for t in tags:
-            cid = int(t.category_id)
-            c = cat_by_id.get(cid)
-            if not c:
-                continue
-            
-            # For summary row (plat=""), aggregate across all platforms and users
-            if plat == "":
-                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id))
-                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id)) if prev_start else 0
-                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id)) if yoy_start else 0
-            # For platform-specific rows (plat="taobao") but uid=0, aggregate across all users in that platform
-            elif uid == 0:
-                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id) and k[1] == plat)
-                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id) and k[1] == plat) if prev_start else 0
-                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id) and k[1] == plat) if yoy_start else 0
-            # For specific platform + user
-            else:
-                cur = cur_idx.get((int(t.id), plat or "", key_uid), 0)
-                prev = prev_idx.get((int(t.id), plat or "", key_uid), 0) if prev_start else 0
-                yy = yoy_idx.get((int(t.id), plat or "", key_uid), 0) if yoy_start else 0
-            
-            total_cur += cur
-            total_prev += prev
-            total_yoy += yy
-        
-        table_rows.append({
-            "is_header": True,
-            "group_id": group_id,
-            "group_label": group_label,
-            "level": level,
-            "parent_id": parent_id,
-            "category_name": "",
-            "tag_name": "",
-            "tag_standard": "",
-            "current": "",
-            "current_sum": total_cur,
-            "mom": "",
-            "mom_sum": _fmt_delta(total_cur, total_prev) if prev_start else "—",
-            "yoy": "",
-            "yoy_sum": _fmt_delta(total_cur, total_yoy) if yoy_start else "—",
-            "ratio": "",
-            "ratio_sum": _fmt_ratio(total_cur, total_conv_cur),
-            "total_conversations": total_conv_cur,
-        })
-        
-        for t in tags:
-            cid = int(t.category_id)
-            c = cat_by_id.get(cid)
-            if not c:
-                continue
-            
-            # For summary row (plat=""), aggregate across all platforms and users
-            if plat == "":
-                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id))
-                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id)) if prev_start else 0
-                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id)) if yoy_start else 0
-            # For platform-specific rows (plat="taobao") but uid=0, aggregate across all users in that platform
-            elif uid == 0:
-                cur = sum(v for k, v in cur_idx.items() if k[0] == int(t.id) and k[1] == plat)
-                prev = sum(v for k, v in prev_idx.items() if k[0] == int(t.id) and k[1] == plat) if prev_start else 0
-                yy = sum(v for k, v in yoy_idx.items() if k[0] == int(t.id) and k[1] == plat) if yoy_start else 0
-            # For specific platform + user
-            else:
-                cur = cur_idx.get((int(t.id), plat or "", key_uid), 0)
-                prev = prev_idx.get((int(t.id), plat or "", key_uid), 0) if prev_start else 0
-                yy = yoy_idx.get((int(t.id), plat or "", key_uid), 0) if yoy_start else 0
-            
-            table_rows.append({
-                "is_header": False,
-                "group_id": group_id,
-                "group_label": "",
-                "level": level,
-                "parent_id": parent_id,
-                "category_name": c.name,
-                "tag_name": t.name,
-                "tag_standard": (t.standard or "") or (t.description or "") or "未配置",
-                "tag_id": int(t.id),
-                "platform": plat or "",
-                "agent_user_id": key_uid if key_uid != 0 else "",
-                "current": cur,
-                "mom": _fmt_delta(cur, prev) if prev_start else "—",
-                "yoy": _fmt_delta(cur, yy) if yoy_start else "—",
-                "ratio": _fmt_ratio(cur, total_conv_cur),
-            })
-
-    # 汇总层 (level=0)
-    _add_group("summary", "汇总", "", 0, level=0, parent_id=None)
-
-    # 平台层 (level=1)
-    for p in platforms:
-        if not p:
-            continue
-        _add_group(f"plat-{p}", f"平台：{p}", p, 0, level=1, parent_id="summary")
-        
-        # 客服层 (level=2)
-        uids = sorted({k[2] for k in cur_idx.keys() if k[1] == p and k[2] != 0})
-        if agent_user_id_int:
-            uids = [uid for uid in uids if uid == agent_user_id_int]
-        for uid in uids:
-            nm = user_by_id.get(uid)
-            label = nm.name if nm else f"UID:{uid}"
-            _add_group(f"plat-{p}-u{uid}", f"站内客服：{label}", p, uid, level=2, parent_id=f"plat-{p}")
+    user_meta = [
+        {
+            "id": int(u.id),
+            "name": u.name,
+            "label": f"{u.name}（{u.role}）",
+        }
+        for u in users
+        if u.id
+    ]
 
     time_modes = [
         ("all", "汇总"),
@@ -5148,22 +5341,229 @@ def tags_report_page(
         flash="",
         time_modes=time_modes,
         filters={
-            "time_mode": mode,
-            "start": (cur_start.date().isoformat() if cur_start else (start or "")),
-            "end": ((cur_end_excl - timedelta(days=1)).date().isoformat() if cur_end_excl else (end or "")),
+            "time_mode": period["mode"],
+            "start": period["display_start"] or (start or ""),
+            "end": period["display_end"] or (end or ""),
             "platform": platform_f,
             "agent_user_id": agent_user_id_int or "",
             "yoy": bool(yoy),
         },
         period={
-            "current_label": cur_label,
-            "prev_label": prev_label,
-            "yoy_label": yoy_label,
+            "current_label": period["cur_label"],
+            "prev_label": period["prev_label"],
+            "yoy_label": period["yoy_label"],
         },
         platform_options=platform_options,
         agent_options=agent_options,
-        table_rows=table_rows,
+        tag_meta=tag_meta,
+        category_meta=category_meta,
+        user_meta=user_meta,
     )
+
+
+@app.get("/api/reports/tags/pivot-data")
+def tags_report_pivot_data(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    time_mode: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    platform: str | None = None,
+    agent_user_id: str | None = None,
+    reception_scenario: str | None = None,
+    satisfaction_change: str | None = None,
+    yoy: int | None = None,
+):
+    """标签报表数据透视表数据源。"""
+    from sqlalchemy import func
+
+    period = _build_tag_report_period(time_mode, start, end, bool(yoy))
+
+    platform_f = (platform or "").strip()
+    scenario_f = (reception_scenario or "").strip()
+    satisfaction_f = (satisfaction_change or "").strip()
+    agent_user_id_int = None
+    try:
+        agent_user_id_int = int(agent_user_id) if agent_user_id else None
+    except Exception:
+        agent_user_id_int = None
+
+    if user.role == Role.agent:
+        agent_user_id_int = user.id
+
+    latest_subq = (
+        select(func.max(ConversationAnalysis.id).label("analysis_id"))
+        .group_by(ConversationAnalysis.conversation_id)
+    ).subquery()
+
+    binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
+    conv_date = func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at)
+
+    def _apply_filters(stmt, start_dt, end_excl):
+        if start_dt:
+            stmt = stmt.where(conv_date >= start_dt)
+        if end_excl:
+            stmt = stmt.where(conv_date < end_excl)
+        if platform_f:
+            stmt = stmt.where(Conversation.platform == platform_f)
+        if agent_user_id_int:
+            stmt = stmt.where(binding_user_id == agent_user_id_int)
+        if scenario_f:
+            stmt = stmt.where(ConversationAnalysis.reception_scenario == scenario_f)
+        if satisfaction_f:
+            stmt = stmt.where(ConversationAnalysis.satisfaction_change == satisfaction_f)
+        return stmt
+
+    tag_base_stmt = (
+        select(
+            TagDefinition.id.label("tag_id"),
+            TagDefinition.category_id.label("category_id"),
+            Conversation.platform.label("platform"),
+            binding_user_id.label("agent_user_id"),
+            ConversationAnalysis.reception_scenario.label("scenario"),
+            ConversationAnalysis.satisfaction_change.label("satisfaction"),
+            func.count(func.distinct(Conversation.id)).label("cnt"),
+        )
+        .select_from(ConversationTagHit)
+        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
+        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+        .where(TagDefinition.is_active == True)
+    )
+
+    tag_group_cols = (
+        TagDefinition.id,
+        TagDefinition.category_id,
+        Conversation.platform,
+        binding_user_id,
+        ConversationAnalysis.reception_scenario,
+        ConversationAnalysis.satisfaction_change,
+    )
+
+    def _tag_rows(start_dt, end_excl):
+        stmt = _apply_filters(tag_base_stmt, start_dt, end_excl).group_by(*tag_group_cols)
+        return session.exec(stmt).all()
+
+    cur_rows = _tag_rows(period["cur_start"], period["cur_end_excl"])
+    prev_rows = _tag_rows(period["prev_start"], period["prev_end_excl"]) if period["prev_start"] else []
+    yoy_rows = _tag_rows(period["yoy_start"], period["yoy_end_excl"]) if period["yoy_start"] else []
+
+    def _tag_index(rows):
+        idx: dict[tuple, int] = {}
+        for tag_id, cat_id, plat, uid, scenario, satisfaction, cnt in rows:
+            key = (
+                int(tag_id or 0),
+                int(cat_id or 0),
+                str(plat or ""),
+                int(uid or 0),
+                str(scenario or ""),
+                str(satisfaction or ""),
+            )
+            idx[key] = int(cnt or 0)
+        return idx
+
+    cur_idx = _tag_index(cur_rows)
+    prev_idx = _tag_index(prev_rows)
+    yoy_idx = _tag_index(yoy_rows)
+
+    all_tag_keys = set(cur_idx.keys()) | set(prev_idx.keys()) | set(yoy_idx.keys())
+    tag_hits = [
+        {
+            "tag_id": k[0],
+            "category_id": k[1],
+            "platform": k[2],
+            "agent_user_id": k[3],
+            "reception_scenario": k[4],
+            "satisfaction_change": k[5],
+            "current": cur_idx.get(k, 0),
+            "prev": prev_idx.get(k, 0),
+            "yoy": yoy_idx.get(k, 0),
+        }
+        for k in all_tag_keys
+    ]
+
+    total_base_stmt = (
+        select(
+            Conversation.platform.label("platform"),
+            binding_user_id.label("agent_user_id"),
+            ConversationAnalysis.reception_scenario.label("scenario"),
+            ConversationAnalysis.satisfaction_change.label("satisfaction"),
+            func.count(func.distinct(Conversation.id)).label("cnt"),
+        )
+        .select_from(Conversation)
+        .join(ConversationAnalysis, ConversationAnalysis.conversation_id == Conversation.id)
+        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+    )
+
+    total_group_cols = (
+        Conversation.platform,
+        binding_user_id,
+        ConversationAnalysis.reception_scenario,
+        ConversationAnalysis.satisfaction_change,
+    )
+
+    def _total_rows(start_dt, end_excl):
+        stmt = _apply_filters(total_base_stmt, start_dt, end_excl).group_by(*total_group_cols)
+        return session.exec(stmt).all()
+
+    total_cur_rows = _total_rows(period["cur_start"], period["cur_end_excl"])
+    total_prev_rows = _total_rows(period["prev_start"], period["prev_end_excl"]) if period["prev_start"] else []
+    total_yoy_rows = _total_rows(period["yoy_start"], period["yoy_end_excl"]) if period["yoy_start"] else []
+
+    def _total_index(rows):
+        idx: dict[tuple, int] = {}
+        for plat, uid, scenario, satisfaction, cnt in rows:
+            key = (str(plat or ""), int(uid or 0), str(scenario or ""), str(satisfaction or ""))
+            idx[key] = int(cnt or 0)
+        return idx
+
+    total_cur_idx = _total_index(total_cur_rows)
+    total_prev_idx = _total_index(total_prev_rows)
+    total_yoy_idx = _total_index(total_yoy_rows)
+
+    all_total_keys = set(total_cur_idx.keys()) | set(total_prev_idx.keys()) | set(total_yoy_idx.keys())
+    totals = [
+        {
+            "platform": k[0],
+            "agent_user_id": k[1],
+            "reception_scenario": k[2],
+            "satisfaction_change": k[3],
+            "current": total_cur_idx.get(k, 0),
+            "prev": total_prev_idx.get(k, 0),
+            "yoy": total_yoy_idx.get(k, 0),
+        }
+        for k in all_total_keys
+    ]
+
+    def _date_str(d: datetime | None) -> str:
+        return d.date().isoformat() if d else ""
+
+    cur_end = period["cur_end_excl"] - timedelta(days=1) if period["cur_end_excl"] else None
+    prev_end = period["prev_end_excl"] - timedelta(days=1) if period["prev_end_excl"] else None
+    yoy_end = period["yoy_end_excl"] - timedelta(days=1) if period["yoy_end_excl"] else None
+
+    return {
+        "mode": period["mode"],
+        "period": {
+            "current_label": period["cur_label"],
+            "prev_label": period["prev_label"],
+            "yoy_label": period["yoy_label"],
+        },
+        "range": {
+            "current_start": _date_str(period["cur_start"]),
+            "current_end": _date_str(cur_end),
+            "prev_start": _date_str(period["prev_start"]),
+            "prev_end": _date_str(prev_end),
+            "yoy_start": _date_str(period["yoy_start"]),
+            "yoy_end": _date_str(yoy_end),
+        },
+        "tag_hits": tag_hits,
+        "totals": totals,
+    }
 
 
 @app.get("/api/reports/tags/conversations")
@@ -5176,6 +5576,8 @@ def get_tag_conversations(
     end: str | None = None,
     platform: str | None = None,
     agent_user_id: str | None = None,
+    reception_scenario: str | None = None,
+    satisfaction_change: str | None = None,
 ):
     """Get list of conversation IDs that hit a specific tag."""
     from sqlalchemy import func
@@ -5201,6 +5603,8 @@ def get_tag_conversations(
         end_dt = end_dt + timedelta(days=1)  # Make it exclusive
 
     platform_f = (platform or "").strip()
+    scenario_f = (reception_scenario or "").strip()
+    satisfaction_f = (satisfaction_change or "").strip()
     agent_user_id_int = None
     try:
         agent_user_id_int = int(agent_user_id) if agent_user_id else None
@@ -5238,6 +5642,10 @@ def get_tag_conversations(
         stmt = stmt.where(Conversation.platform == platform_f)
     if agent_user_id_int:
         stmt = stmt.where(binding_user_id == agent_user_id_int)
+    if scenario_f:
+        stmt = stmt.where(ConversationAnalysis.reception_scenario == scenario_f)
+    if satisfaction_f:
+        stmt = stmt.where(ConversationAnalysis.satisfaction_change == satisfaction_f)
 
     stmt = stmt.order_by(Conversation.id.desc())
     cids = [row for row in session.exec(stmt).all()]
