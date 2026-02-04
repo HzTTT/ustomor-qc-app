@@ -78,6 +78,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    # Avoid noisy 404s in browser console when no favicon is configured yet.
+    return Response(status_code=204)
+
+
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
@@ -3564,7 +3570,9 @@ def conversation_detail(
         local_today_idx = 0
         for m in (msgs_by_conv.get(cid) or []):
             is_today = (cid == int(conv.id))
+            today_local_idx: int | None = None
             if is_today:
+                today_local_idx = local_today_idx
                 today_local_to_global[local_today_idx] = global_idx
                 if today_anchor_global is None:
                     today_anchor_global = global_idx
@@ -3577,6 +3585,7 @@ def conversation_detail(
                     "msg": m,
                     "global_idx": global_idx,
                     "is_today": is_today,
+                    "today_local_idx": today_local_idx,
                 }
             )
             global_idx += 1
@@ -3653,7 +3662,7 @@ def conversation_detail(
                 cid = int(cat.id or 0)
                 g = grouped.get(cid)
                 if not g:
-                    g = {"category": cat.name or "", "items": []}
+                    g = {"category_id": cid, "category": cat.name or "", "items": []}
                     grouped[cid] = g
                 ev = hit.evidence or {}
                 ev_list = ev if isinstance(ev, list) else (ev.get("evidence") if isinstance(ev, dict) else []) or []
@@ -3700,6 +3709,13 @@ def conversation_detail(
             .join(TagDefinition, TagDefinition.id == ManualTagBinding.tag_id)
             .join(TagCategory, TagCategory.id == TagDefinition.category_id)
             .where(ManualTagBinding.conversation_id == conv.id)
+            .order_by(
+                TagCategory.sort_order.asc(),
+                TagCategory.id.asc(),
+                TagDefinition.sort_order.asc(),
+                TagDefinition.id.asc(),
+                ManualTagBinding.id.asc(),
+            )
         ).all()
         for mb, t, c in rows:
             # Process evidence for manual tags
@@ -3707,14 +3723,48 @@ def conversation_detail(
             ev = mb.evidence or {}
             ev_list = ev if isinstance(ev, list) else (ev.get("evidence") if isinstance(ev, dict) else []) or []
             
+            evidence_global: list[dict[str, object]] = []
+            if isinstance(ev_list, list):
+                for e in ev_list:
+                    if not isinstance(e, dict):
+                        continue
+                    start_loc = e.get("start_index") if e.get("start_index") is not None else e.get("message_index")
+                    end_loc = e.get("end_index") if e.get("end_index") is not None else e.get("message_index")
+                    if start_loc is None and end_loc is None:
+                        continue
+                    try:
+                        si = int(start_loc) if start_loc is not None else 0
+                        ei = int(end_loc) if end_loc is not None else si
+                    except Exception:
+                        continue
+                    indices = []
+                    for li in range(si, ei + 1):
+                        gi = today_local_to_global.get(li)
+                        if gi is not None:
+                            indices.append(int(gi))
+                    if (not indices) and (global_idx > 0):
+                        # Back-compat: some manual bindings may have stored GLOBAL indices directly.
+                        # If the indices are out of today's local range but within the global range, treat them as global.
+                        today_len = len(msgs_today) if isinstance(msgs_today, list) else 0
+                        if (si >= today_len or ei >= today_len) and (si < global_idx or ei < global_idx):
+                            gs = max(0, min(si, ei))
+                            ge = min(global_idx - 1, max(si, ei))
+                            if ge >= gs:
+                                indices = list(range(gs, ge + 1))
+                    if indices:
+                        evidence_global.append({"indices": indices})
+
             manual_tag_bindings.append({
                 "binding_id": mb.id,
                 "tag_id": t.id,
+                "category_id": int(c.id or 0),
                 "tag": t.name or "",
                 "category": c.name or "",
+                "standard": (t.standard or "") or (t.description or "") or "未配置",
                 "reason": mb.reason or "",
-                "evidence": ev_list,
-                "evidence_json": json.dumps(ev_list),
+                "evidence": ev_list if isinstance(ev_list, list) else [],
+                "evidence_global": evidence_global,
+                "evidence_json": json.dumps(evidence_global),
             })
 
     # 全部标签（供添加下拉）
@@ -3735,6 +3785,113 @@ def conversation_detail(
                     "reason": it.get("reason", ""),
                     "evidence_json": it.get("evidence_json", "[]"),
                 }
+
+    # 合并：标签体系（AI命中） + 手动绑定 => 对话标签管理面板
+    manual_tag_ids: set[int] = set()
+    for b in manual_tag_bindings:
+        try:
+            tid = int(b.get("tag_id") or 0)
+        except Exception:
+            tid = 0
+        if tid:
+            manual_tag_ids.add(tid)
+
+    combined_by_cat: dict[int, dict[str, object]] = {}
+
+    def _ensure_group(cid: int, name: str) -> dict[str, object]:
+        g = combined_by_cat.get(cid)
+        if not g:
+            g = {"category_id": cid, "category": name, "items": []}
+            combined_by_cat[cid] = g
+        return g
+
+    # Manual first (manual overrides AI when same tag_id exists)
+    for b in manual_tag_bindings:
+        try:
+            tid = int(b.get("tag_id") or 0)
+        except Exception:
+            tid = 0
+        if not tid:
+            continue
+
+        try:
+            cid = int(b.get("category_id") or 0)
+        except Exception:
+            cid = 0
+        cat_name = str(b.get("category") or "")
+
+        manual_reason = str(b.get("reason") or "").strip()
+        hit_meta = hit_tags_map.get(tid) or {}
+        hit_reason = str(hit_meta.get("reason") or "").strip()
+
+        display_reason = manual_reason or hit_reason
+        reason_from = "manual" if manual_reason else ("ai" if hit_reason else "")
+
+        evidence_json = str(b.get("evidence_json") or "[]")
+        try:
+            has_manual_evidence = bool(json.loads(evidence_json))
+        except Exception:
+            has_manual_evidence = False
+        if (not has_manual_evidence) and hit_meta.get("evidence_json"):
+            evidence_json = str(hit_meta.get("evidence_json") or "[]")
+
+        _ensure_group(cid, cat_name)["items"].append(
+            {
+                "tag_id": tid,
+                "tag": b.get("tag") or "",
+                "source": "manual",
+                "reason": display_reason,
+                "reason_from": reason_from,
+                "standard": b.get("standard") or "",
+                "evidence_json": evidence_json,
+                "binding_id": b.get("binding_id"),
+            }
+        )
+
+    # AI hits (skip if overridden by manual binding)
+    for g in tag_groups:
+        try:
+            cid = int(g.get("category_id") or 0)
+        except Exception:
+            cid = 0
+        cat_name = str(g.get("category") or "")
+        for it in g.get("items", []):
+            try:
+                tid = int(it.get("tag_id") or 0)
+            except Exception:
+                tid = 0
+            if not tid:
+                continue
+            if tid in manual_tag_ids:
+                continue
+            _ensure_group(cid, cat_name)["items"].append(
+                {
+                    "tag_id": tid,
+                    "tag": it.get("tag") or "",
+                    "source": "ai",
+                    "reason": it.get("reason") or "",
+                    "reason_from": "ai",
+                    "standard": it.get("standard") or "",
+                    "evidence_json": it.get("evidence_json") or "[]",
+                    "hit_id": it.get("hit_id"),
+                }
+            )
+
+    tag_panel_groups: list[dict[str, object]] = []
+    seen_cat: set[int] = set()
+    for c in _cats:
+        cid = int(c.id or 0)
+        g = combined_by_cat.get(cid)
+        if not g or not g.get("items"):
+            continue
+        tag_panel_groups.append(g)
+        seen_cat.add(cid)
+    # Any leftover categories (deleted/inactive etc.)
+    for cid, g in combined_by_cat.items():
+        if cid in seen_cat:
+            continue
+        if g.get("items"):
+            tag_panel_groups.append(g)
 
     # task assignees
     users_by_id = {u.id: u for u in session.exec(select(User)).all()}
@@ -3819,6 +3976,8 @@ def conversation_detail(
     except Exception:
         agents_display = ""
 
+    page_error = (request.query_params.get("error") or "").strip()
+
     return _template(
         request,
         "conversation.html",
@@ -3836,11 +3995,13 @@ def conversation_detail(
         users_by_id=users_by_id,
         display_agent_label_by_conv=display_agent_label_by_conv,
         sender_label_by_msgid=sender_label_by_msgid,
+        page_error=page_error,
         highlight_red_set=highlight_red_set,
         highlight_yellow_set=highlight_yellow_set,
         highlight_green_set=highlight_green_set,
         tag_groups=tag_groups,
         manual_tag_bindings=manual_tag_bindings,
+        tag_panel_groups=tag_panel_groups,
         tags_for_add=tags_for_add,
         all_tag_categories=_cats,
         all_tags_by_cat=_tags_by_cat,
@@ -4328,38 +4489,69 @@ def add_conversation_tag(
     conversation_id: int,
     user: User = Depends(require_role("admin", "supervisor")),
     session: Session = Depends(get_session),
-    tag_id: int = Form(...),
+    tag_id: str = Form(""),
     reason: str = Form(""),
-    start_index: int | None = Form(None),
-    end_index: int | None = Form(None),
+    start_index: str = Form(""),
+    end_index: str = Form(""),
 ):
     conv = session.get(Conversation, conversation_id)
     if not conv:
         return _template(request, "error.html", user=user, message="找不到对话")
-    tag = session.get(TagDefinition, tag_id)
+    tag_id_norm = (tag_id or "").strip()
+    try:
+        tag_id_int = int(tag_id_norm)
+    except Exception:
+        tag_id_int = 0
+    if not tag_id_int:
+        return _redirect(f"/conversations/{conversation_id}?error=请选择标签")
+    tag = session.get(TagDefinition, int(tag_id_int))
     if not tag or not getattr(tag, "is_active", True):
         return _redirect(f"/conversations/{conversation_id}?error=标签不存在或已停用")
+
+    # 必须选择引用范围（仅当日）
+    if not (start_index or "").strip() or not (end_index or "").strip():
+        return _redirect(f"/conversations/{conversation_id}?error=请先在左侧选择当日消息作为引用范围")
+    try:
+        si = int((start_index or "").strip())
+        ei = int((end_index or "").strip())
+    except Exception:
+        return _redirect(f"/conversations/{conversation_id}?error=引用范围不合法")
+
+    if si < 0 or ei < 0:
+        return _redirect(f"/conversations/{conversation_id}?error=引用范围不合法")
+    if ei < si:
+        si, ei = ei, si
+
+    # Validate indices against today's conversation messages (local indices, 0-based)
+    msg_count = len(
+        session.exec(
+            select(Message.id)
+            .where(Message.conversation_id == conversation_id)
+        ).all()
+    )
+    if msg_count <= 0:
+        return _redirect(f"/conversations/{conversation_id}?error=当日对话暂无消息，无法引用")
+    if si >= msg_count or ei >= msg_count:
+        return _redirect(f"/conversations/{conversation_id}?error=引用范围超出当日消息范围")
+
     existing = session.exec(
         select(ManualTagBinding).where(
             ManualTagBinding.conversation_id == conversation_id,
-            ManualTagBinding.tag_id == tag_id,
+            ManualTagBinding.tag_id == int(tag_id_int),
         )
     ).first()
     if not existing:
-        # Build evidence if indices provided
-        evidence = {}
-        if start_index is not None:
-            evidence_list = [{
-                "message_index": start_index,
-                "start_index": start_index,
-                "end_index": end_index if end_index is not None else start_index,
-            }]
-            evidence = {"evidence": evidence_list}
+        evidence_list = [{
+            "message_index": si,
+            "start_index": si,
+            "end_index": ei,
+        }]
+        evidence = {"evidence": evidence_list}
         
         session.add(
             ManualTagBinding(
                 conversation_id=conversation_id,
-                tag_id=tag_id,
+                tag_id=int(tag_id_int),
                 created_by_user_id=user.id,
                 reason=(reason or "").strip()[:500],
                 evidence=evidence,

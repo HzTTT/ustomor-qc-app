@@ -18,30 +18,50 @@
   <div id="pivot-sidebar" class="bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:fixed lg:left-6 lg:top-24 lg:w-64">
     <div class="flex items-start justify-between gap-3">
       <div>
-        <div class="font-medium">行标签</div>
-        <div class="text-xs text-slate-500 mt-1">拖拽调整层级与顺序。标签分类/标签会自动跟随。</div>
+        <div class="font-medium">行维度</div>
+        <div class="text-xs text-slate-500 mt-1">拖拽选择并排序：报表会按这些维度逐层分组。系统会自动补充「标签一级分类/标签」。</div>
       </div>
     </div>
-    <div class="mt-3 p-2 rounded-xl border bg-slate-50 space-y-2">
-      <div class="grid grid-cols-2 gap-2">
-        <button id="expand-all" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">展开全部</button>
-        <button id="collapse-all" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">折叠全部</button>
-      </div>
-      <select id="level-select" class="border rounded-xl px-3 py-2 text-xs w-full bg-white"></select>
-      <div class="grid grid-cols-2 gap-2">
-        <button id="expand-level" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">展开该层</button>
-        <button id="collapse-level" type="button" class="px-3 py-2 rounded-xl border bg-white text-xs hover:bg-slate-50">折叠该层</button>
+    <div class="mt-3 rounded-xl border bg-slate-50">
+      <div class="p-3 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs font-medium text-slate-700">展开/收起表格</div>
+          <div class="text-[11px] text-slate-500">也可在表格里点 ▸</div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs text-slate-600 shrink-0">全部</div>
+          <div class="inline-flex rounded-xl border bg-white overflow-hidden">
+            <button id="expand-all" type="button" class="px-3 py-2 text-xs hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200">展开</button>
+            <div class="w-px bg-slate-200"></div>
+            <button id="collapse-all" type="button" class="px-3 py-2 text-xs hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200">收起</button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <label for="level-select" class="block text-xs text-slate-600">当前层级</label>
+          <select id="level-select" class="border rounded-xl px-3 py-2 text-xs w-full bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"></select>
+          <div class="flex items-center justify-between gap-2">
+            <div class="text-xs text-slate-600 shrink-0">本层</div>
+            <div class="inline-flex rounded-xl border bg-white overflow-hidden">
+              <button id="expand-level" type="button" class="px-3 py-2 text-xs hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-40 disabled:cursor-not-allowed">展开</button>
+              <div class="w-px bg-slate-200"></div>
+              <button id="collapse-level" type="button" class="px-3 py-2 text-xs hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 disabled:opacity-40 disabled:cursor-not-allowed">收起</button>
+            </div>
+          </div>
+          <div id="level-hint" class="text-[11px] text-slate-500"></div>
+        </div>
       </div>
     </div>
     <div class="mt-4">
-      <div class="text-xs text-slate-500 mb-1">选中行标签</div>
+      <div class="text-xs text-slate-500 mb-1">已选维度（行）</div>
       <div id="row-fields" class="min-h-[52px] flex flex-wrap gap-2 p-2 border rounded-xl bg-slate-50" data-list="active"></div>
     </div>
     <div class="mt-3">
-      <div class="text-xs text-slate-500 mb-1">可选字段</div>
+      <div class="text-xs text-slate-500 mb-1">可选维度</div>
       <div id="available-fields" class="min-h-[52px] flex flex-wrap gap-2 p-2 border rounded-xl bg-slate-50" data-list="available"></div>
     </div>
-    <div class="mt-3 text-xs text-slate-500">标签一级分类与标签默认附加在每个层级下显示。</div>
+    <div class="mt-3 text-xs text-slate-500">提示：每一层都会自动带上「标签一级分类」和「标签」。</div>
   </div>
 
   <div class="lg:pl-72">
@@ -1192,6 +1212,10 @@
 
   function populateLevelSelect() {
     const select = document.getElementById("level-select");
+    const hint = document.getElementById("level-hint");
+    const expandBtn = document.getElementById("expand-level");
+    const collapseBtn = document.getElementById("collapse-level");
+    const prevValue = select.value;
     select.innerHTML = "";
     const fields = getEffectiveRowFields();
     const levels = fields.map((field, idx) => {
@@ -1204,16 +1228,30 @@
     if (levels.length === 0) {
       const opt = document.createElement("option");
       opt.value = "1";
-      opt.textContent = "层级";
+      opt.textContent = "先选择行维度";
       select.appendChild(opt);
+      select.disabled = true;
+      if (expandBtn) expandBtn.disabled = true;
+      if (collapseBtn) collapseBtn.disabled = true;
+      if (hint) hint.textContent = "先在下方「已选维度（行）」里拖入至少 1 个维度，再按层级展开/收起。";
       return;
     }
+    select.disabled = false;
+    if (expandBtn) expandBtn.disabled = false;
+    if (collapseBtn) collapseBtn.disabled = false;
+    if (hint) hint.textContent = "";
     levels.forEach(l => {
       const opt = document.createElement("option");
       opt.value = l.level;
       opt.textContent = `第${l.level}层：${l.label}`;
       select.appendChild(opt);
     });
+
+    // 保留用户之前选中的层级（如果仍然存在）
+    const maxLevel = levels.length;
+    const v = Number(prevValue || 1);
+    const nextValue = String(Math.min(Math.max(v, 1), maxLevel));
+    select.value = nextValue;
   }
 
   function toggleGroup(groupId) {

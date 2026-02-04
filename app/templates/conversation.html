@@ -10,21 +10,36 @@
       {% if agents_display %} · 客服：{{ agents_display }}{% endif %}
     </div>
   </div>
-  <div class="flex items-center gap-2">
-    {% if user.role in ['admin','supervisor'] %}
-      <form method="post" action="/conversations/{{ conv.id }}/reanalyze">
-        <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">重新分析（覆盖）</button>
-      </form>
-    {% endif %}
-    {% if user.role in ['admin','supervisor'] %}
-      <a href="/conversations/{{ conv.id }}/export" class="px-3 py-2 rounded-xl border bg-white text-sm">导出JSONL</a>
-    {% endif %}
-    <a href="/conversations/{{ conv.id }}/export.txt" class="px-3 py-2 rounded-xl border bg-white text-sm">导出当日TXT</a>
-    <a href="/conversations/{{ conv.id }}/export-user.txt" class="px-3 py-2 rounded-xl border bg-white text-sm">导出用户TXT</a>
-    <a href="javascript:history.back()" class="px-3 py-2 rounded-xl border bg-white text-sm">返回</a>
-    <a href="/tasks" class="px-3 py-2 rounded-xl border bg-white text-sm">培训任务</a>
+  <div class="flex items-center">
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      {% if user.role in ['admin','supervisor'] %}
+        <form method="post" action="/conversations/{{ conv.id }}/reanalyze">
+          <button class="inline-flex items-center justify-center h-9 px-3 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400 whitespace-nowrap" title="重新分析并覆盖旧结果">重新分析（覆盖）</button>
+        </form>
+      {% endif %}
+
+      <details class="relative">
+        <summary class="list-none cursor-pointer inline-flex items-center justify-center h-9 px-3 rounded-xl border bg-white text-sm font-medium hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 whitespace-nowrap">导出</summary>
+        <div class="absolute right-0 mt-2 w-44 bg-white border rounded-xl shadow-lg p-1 z-50">
+          {% if user.role in ['admin','supervisor'] %}
+            <a href="/conversations/{{ conv.id }}/export" class="block px-3 py-2 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">导出 JSONL</a>
+          {% endif %}
+          <a href="/conversations/{{ conv.id }}/export.txt" class="block px-3 py-2 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">导出 当日TXT</a>
+          <a href="/conversations/{{ conv.id }}/export-user.txt" class="block px-3 py-2 rounded-lg text-sm hover:bg-slate-50 whitespace-nowrap">导出 用户TXT</a>
+        </div>
+      </details>
+
+      <a href="javascript:history.back()" class="inline-flex items-center justify-center h-9 px-3 rounded-xl border bg-white text-sm font-medium hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 whitespace-nowrap">返回</a>
+      <a href="/tasks" class="inline-flex items-center justify-center h-9 px-3 rounded-xl border bg-white text-sm font-medium hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200 whitespace-nowrap">培训任务</a>
+    </div>
   </div>
 </div>
+
+{% if page_error %}
+  <div class="mb-4 px-4 py-3 rounded-2xl border border-red-200 bg-red-50 text-red-700 text-sm">
+    {{ page_error }}
+  </div>
+{% endif %}
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
   <div class="bg-white border rounded-2xl p-4">
@@ -51,11 +66,14 @@
           {% set m = item.msg %}
           {% set idx = item.global_idx %}
 
-          <div id="msg-{{ idx }}" class="p-3 rounded-xl border msg-cell
+          <div
+            id="msg-{{ idx }}"
+            data-global-idx="{{ idx }}"
+            data-is-today="{{ '1' if item.is_today else '0' }}"
+            {% if item.is_today %}data-today-idx="{{ item.today_local_idx }}"{% endif %}
+            class="p-3 rounded-xl border msg-cell {% if user.role in ['admin','supervisor'] and item.is_today %}msg-selectable cursor-pointer hover:bg-pink-100/60{% endif %}
             {% if item.is_today %} bg-pink-50/60 border-pink-200
-            {% elif m.sender in ['agent','system'] %} bg-slate-50
-            {% elif m.sender == 'buyer' %} bg-white
-            {% else %} bg-slate-100
+            {% else %} bg-slate-100/70 border-slate-200
             {% endif %}">
             <div class="text-xs text-slate-500 flex items-center justify-between">
               {% if m.sender == 'buyer' %}
@@ -109,47 +127,8 @@
 
 
   <div class="space-y-4">
-    <!-- 标签体系模块（移到AI质检输出上方） -->
     <div class="bg-white border rounded-2xl p-4">
-      <h2 class="font-semibold mb-3">标签体系（命中标签）</h2>
-      <div class="text-xs text-slate-500 mb-3">点击标签可高亮左侧对话中的引用范围</div>
-      
-      {% if tag_groups and tag_groups|length > 0 %}
-        <div class="space-y-3">
-          {% for g in tag_groups %}
-            <div class="border rounded-xl p-3 bg-slate-50/50">
-              <div class="text-sm font-medium text-slate-700 mb-2">{{ g.category }}</div>
-              <div class="flex flex-wrap gap-2">
-                {% for it in g['items'] %}
-                  {# 只显示命中的标签 - 绿色 #}
-                  <span class="inline-flex items-center gap-1">
-                    <button type="button" 
-                      class="tag-system-btn tag-hit inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full border-2 border-green-500 bg-green-50 text-sm font-medium text-green-700 hover:bg-green-100 cursor-pointer transition-colors"
-                      title="✓ 已命中\n\n判定标准：{{ it.standard }}{% if it.reason %}\n\n命中原因：{{ it.reason }}{% endif %}"
-                      data-tag-id="{{ it.tag_id }}"
-                      data-evidence="{{ it.evidence_json|e }}"
-                      data-is-hit="true">
-                      <span class="text-green-600">✓</span> {{ it.tag }}
-                    </button>
-                    {% if user.role in ['admin','supervisor'] and it.hit_id %}
-                      <form method="post" action="/conversations/{{ conv.id }}/tags/ai/remove" class="inline" onsubmit="return confirm('确定要删除这个AI标签吗？');">
-                        <input type="hidden" name="hit_id" value="{{ it.hit_id }}" />
-                        <button type="submit" class="text-red-600 hover:text-red-800 text-xs px-1" title="删除AI标签">×</button>
-                      </form>
-                    {% endif %}
-                  </span>
-                {% endfor %}
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="text-sm text-slate-500">本对话暂无命中标签</div>
-      {% endif %}
-    </div>
-
-    <div class="bg-white border rounded-2xl p-4">
-      <h2 class="font-semibold mb-3">AI质检输出（最新）</h2>
+      <h2 class="font-semibold mb-3">AI质检输出</h2>
 
       {% if latest_analysis %}
         <div class="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
@@ -192,55 +171,142 @@
       {% endif %}
     </div>
 
-    {% if user.role in ['admin','supervisor'] %}
-    <div class="bg-white border rounded-2xl p-4">
-      <h2 class="font-semibold mb-3">对话标签管理</h2>
-      <div class="flex flex-wrap gap-2 mb-3">
-        {% for b in manual_tag_bindings %}
-          <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-slate-50 text-sm">
-            {% if b.evidence and b.evidence|length > 0 %}
-              <button type="button" class="manual-tag-btn" title="{{ b.reason }}" data-start="{{ b.evidence[0].start_index }}" data-end="{{ b.evidence[0].end_index }}">
-                {{ b.category }} · {{ b.tag }}
-              </button>
-            {% else %}
-              <span title="{{ b.reason }}">{{ b.category }} · {{ b.tag }}</span>
-            {% endif %}
-            <form method="post" action="/conversations/{{ conv.id }}/tags/remove" class="inline" onsubmit="return confirm('移除该标签？');">
-              <input type="hidden" name="tag_id" value="{{ b.tag_id }}" />
-              <button type="submit" class="ml-1 text-red-600 hover:underline text-xs">移除</button>
-            </form>
-          </span>
-        {% endfor %}
-        {% if not manual_tag_bindings %}
-          <span class="text-slate-500 text-sm">暂无手动绑定标签</span>
-        {% endif %}
-      </div>
-      <form method="post" action="/conversations/{{ conv.id }}/tags/add" class="flex flex-wrap items-end gap-2">
-        <div>
-          <label class="block text-xs text-slate-500 mb-1">添加标签</label>
-          <select name="tag_id" class="px-3 py-2 rounded-xl border text-sm">
-            <option value="">请选择</option>
-            {% for t in tags_for_add %}
-              <option value="{{ t.id }}">{{ t.category }} · {{ t.name }}</option>
-            {% endfor %}
-          </select>
+	    <div class="bg-white border rounded-2xl p-4">
+	      <div class="flex items-center justify-between gap-3 mb-1">
+	        <h2 class="font-semibold">对话标签管理</h2>
+	      </div>
+	      <div class="text-xs text-slate-500 mb-3">点击标签可高亮左侧引用范围；标注来源（人工/AI）。</div>
+
+      {% if tag_panel_groups and tag_panel_groups|length > 0 %}
+        <div class="space-y-3">
+          {% for g in tag_panel_groups %}
+            <div class="border rounded-xl p-3 bg-slate-50/50">
+              <div class="text-sm font-medium text-slate-700 mb-2">{{ g.category }}</div>
+
+	              <div class="space-y-2">
+	                {% for it in g['items'] %}
+	                  <div class="border rounded-xl bg-white p-3">
+	                    <div class="flex items-start gap-2 flex-wrap">
+	                      <button type="button"
+	                        class="tag-evidence-btn relative inline-flex items-center gap-2 px-2.5 py-1.5 pr-7 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/70 cursor-pointer transition-colors"
+	                        data-evidence="{{ it.evidence_json|e }}"
+	                        title="{% if it.standard %}判定标准：{{ it.standard }}{% endif %}">
+	                        <span class="text-sm font-medium">{{ it.tag }}</span>
+	                        {% if it.source == 'manual' %}
+	                          <span title="人工" class="absolute -top-1 -right-1 inline-flex items-center justify-center h-[18px] min-w-[18px] px-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px] font-semibold">人</span>
+	                        {% else %}
+	                          <span title="AI" class="absolute -top-1 -right-1 inline-flex items-center justify-center h-[18px] min-w-[18px] px-1 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 text-[10px] font-semibold">AI</span>
+	                        {% endif %}
+	                      </button>
+
+	                      {% if user.role in ['admin','supervisor'] %}
+	                        {% if it.source == 'manual' and it.tag_id %}
+	                          <form method="post" action="/conversations/{{ conv.id }}/tags/remove" class="inline" onsubmit="return confirm('移除该标签？');">
+	                            <input type="hidden" name="tag_id" value="{{ it.tag_id }}" />
+	                            <button type="submit" class="text-red-600 hover:text-red-800 text-xs px-2 py-1 rounded-lg hover:bg-red-50">移除</button>
+	                          </form>
+                        {% endif %}
+
+                        {% if it.source == 'ai' and it.hit_id %}
+                          <form method="post" action="/conversations/{{ conv.id }}/tags/ai/remove" class="inline" onsubmit="return confirm('移除该标签？');">
+                            <input type="hidden" name="hit_id" value="{{ it.hit_id }}" />
+                            <button type="submit" class="text-red-600 hover:text-red-800 text-xs px-2 py-1 rounded-lg hover:bg-red-50">移除</button>
+                          </form>
+                        {% endif %}
+	                      {% endif %}
+	                    </div>
+
+	                    <div class="mt-2 w-full text-left text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+	                      {{ (it.reason or '—')|trim }}
+	                    </div>
+
+                    {% if it.source == 'manual' and it.reason_from == 'ai' %}
+                      <div class="mt-1 text-xs text-slate-500">（原因沿用 AI 命中原因，未填写人工原因）</div>
+                    {% endif %}
+
+                    {% if it.standard %}
+                      <details class="mt-2">
+                        <summary class="text-xs text-slate-500 cursor-pointer select-none hover:text-slate-700">查看判定标准</summary>
+                        <div class="mt-2 text-xs text-slate-600 whitespace-pre-wrap leading-relaxed">{{ it.standard }}</div>
+                      </details>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
         </div>
-        <div>
-          <label class="block text-xs text-slate-500 mb-1">原因（可选）</label>
-          <input type="text" name="reason" class="px-3 py-2 rounded-xl border text-sm" placeholder="可选" />
-        </div>
-        <div>
-          <label class="block text-xs text-slate-500 mb-1">引用起始索引（可选）</label>
-          <input type="number" name="start_index" class="px-3 py-2 rounded-xl border text-sm w-24" placeholder="例如: 0" min="0" />
-        </div>
-        <div>
-          <label class="block text-xs text-slate-500 mb-1">引用结束索引（可选）</label>
-          <input type="number" name="end_index" class="px-3 py-2 rounded-xl border text-sm w-24" placeholder="例如: 5" min="0" />
-        </div>
-        <button type="submit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">添加</button>
-      </form>
-    </div>
-    {% endif %}
+      {% else %}
+        <div class="text-sm text-slate-500">本对话暂无标签</div>
+      {% endif %}
+
+	      {% if user.role in ['admin','supervisor'] %}
+          <div class="mt-4 border-t pt-4 flex items-center justify-center">
+            <button
+              type="button"
+              id="tagAddOpen"
+              aria-expanded="false"
+              class="group inline-flex flex-col items-center justify-center gap-2"
+              title="新增/绑定标签"
+            >
+              <span class="inline-flex items-center justify-center h-14 w-14 rounded-full border bg-white hover:bg-slate-50 text-slate-700 text-2xl shadow-sm group-active:scale-[0.98] transition">
+                ➕
+              </span>
+              <span class="text-xs text-slate-500 group-hover:text-slate-700">新增/绑定标签</span>
+            </button>
+          </div>
+
+          <dialog
+            id="tagAddDialog"
+            class="w-[min(720px,calc(100vw-2rem))] rounded-2xl p-0 border shadow-xl"
+            data-auto-open="{% if page_error and ('引用范围' in page_error or '标签' in page_error) %}1{% else %}0{% endif %}"
+          >
+            <div class="bg-white rounded-2xl overflow-hidden">
+              <div class="px-4 py-3 border-b flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-xs text-slate-500">对话标签管理</div>
+                  <div class="font-semibold">新增/绑定标签</div>
+                </div>
+                <button type="button" id="tagAddClose" class="px-3 py-1.5 rounded-lg bg-white border text-sm hover:bg-slate-50">关闭</button>
+              </div>
+
+              <div class="p-4">
+                <div class="text-xs text-slate-500 mb-3">
+                  先在左侧点选引用消息（仅当日范围），再提交标签。
+                  <span class="ml-2">引用范围：<span id="tagCiteRange" class="font-medium text-slate-700">未选择（必选）</span></span>
+                  <button type="button" id="tagCiteClear" class="ml-2 px-2 py-1 rounded-lg border bg-white hover:bg-slate-50 text-slate-700">清除</button>
+                  <span id="tagCiteHint" class="ml-2 text-amber-700 hidden"></span>
+                </div>
+
+                <form id="tagAddForm" method="post" action="/conversations/{{ conv.id }}/tags/add" class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                  <input type="hidden" name="start_index" id="tagStartIndex" value="" />
+                  <input type="hidden" name="end_index" id="tagEndIndex" value="" />
+
+                  <div>
+                    <label class="block text-xs text-slate-500 mb-1">选择标签</label>
+                    <select name="tag_id" class="w-full px-3 py-2 rounded-xl border text-sm">
+                      <option value="">请选择</option>
+                      {% for t in tags_for_add %}
+                        <option value="{{ t.id }}">{{ t.category }} · {{ t.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="md:col-span-2">
+                    <label class="block text-xs text-slate-500 mb-1">原因（可选）</label>
+                    <input type="text" name="reason" class="w-full px-3 py-2 rounded-xl border text-sm" placeholder="例如：人工复核确认命中/补充说明" />
+                  </div>
+
+                  <div class="md:col-span-3 flex items-center justify-end gap-3">
+                    <div id="tagAddHelp" class="text-xs text-amber-700 hidden"></div>
+                    <button type="submit" id="tagAddSubmit" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed" disabled>提交</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </dialog>
+	      {% endif %}
+	    </div>
 
     <div class="bg-white border rounded-2xl p-4">
       <h2 class="font-semibold mb-3" id="create_task">训练任务（主管/管理员可发起）</h2>
@@ -288,13 +354,47 @@
 
 <script>
 (function () {
+  // 对话标签管理：打开/关闭“新增/绑定标签”弹层
+  var btnOpen = document.getElementById('tagAddOpen');
+  var dlg = document.getElementById('tagAddDialog');
+  var btnClose = document.getElementById('tagAddClose');
+  function setDialogOpen(open) {
+    if (!dlg) return;
+    if (btnOpen) btnOpen.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try {
+      if (open) {
+        if (!dlg.open) {
+          if (typeof dlg.showModal === 'function') dlg.showModal();
+          else dlg.setAttribute('open', '');
+        }
+      } else {
+        if (dlg.open) {
+          if (typeof dlg.close === 'function') dlg.close();
+          else dlg.removeAttribute('open');
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+  if (btnOpen && dlg) btnOpen.addEventListener('click', function () { setDialogOpen(true); });
+  if (btnClose && dlg) btnClose.addEventListener('click', function () { setDialogOpen(false); });
+  if (dlg) {
+    dlg.addEventListener('close', function () { if (btnOpen) btnOpen.setAttribute('aria-expanded', 'false'); });
+    dlg.addEventListener('cancel', function () { if (btnOpen) btnOpen.setAttribute('aria-expanded', 'false'); });
+    dlg.addEventListener('click', function (ev) {
+      if (ev && ev.target === dlg) setDialogOpen(false);
+    });
+    if ((dlg.getAttribute('data-auto-open') || '') === '1') setDialogOpen(true);
+  }
+
   // 清除所有高亮的公共函数
   function clearAllHighlights() {
     document.querySelectorAll('.msg-cell').forEach(function (el) {
       el.classList.remove('tag-highlight');
     });
     // 取消所有标签的选中状态
-    document.querySelectorAll('.tag-system-btn').forEach(function (el) {
+    document.querySelectorAll('.tag-evidence-btn').forEach(function (el) {
       el.classList.remove('tag-selected');
     });
   }
@@ -318,52 +418,179 @@
     });
   }
 
-  // 标签体系模块的按钮点击
-  document.querySelectorAll('.tag-system-btn').forEach(function (btn) {
+  // 对话标签管理模块：点击标签高亮引用范围
+  document.querySelectorAll('.tag-evidence-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
-      var isHit = this.getAttribute('data-is-hit') === 'true';
       var evidenceJson = this.getAttribute('data-evidence') || '';
-      
       clearAllHighlights();
-      
-      // 添加选中状态
       this.classList.add('tag-selected');
-      
-      if (isHit && evidenceJson) {
-        highlightByEvidence(evidenceJson);
-      }
+      if (evidenceJson) highlightByEvidence(evidenceJson);
     });
   });
 
-  // 旧的标签命中按钮（保持向后兼容）
-  document.querySelectorAll('.tag-highlight-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var raw = this.getAttribute('data-evidence');
-      clearAllHighlights();
-      highlightByEvidence(raw);
-    });
-  });
+  // 新增标签：强制要求选择当日消息引用范围
+  var form = document.getElementById('tagAddForm');
+  if (form) {
+    var inStart = document.getElementById('tagStartIndex');
+    var inEnd = document.getElementById('tagEndIndex');
+    var elRange = document.getElementById('tagCiteRange');
+    var elHint = document.getElementById('tagCiteHint');
+    var elHelp = document.getElementById('tagAddHelp');
+    var btnClear = document.getElementById('tagCiteClear');
+    var selTag = form.querySelector('select[name="tag_id"]');
+    var btnSubmit = document.getElementById('tagAddSubmit');
 
-  // Handle manual tags with simple start/end index
-  document.querySelectorAll('.manual-tag-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var startIdx = parseInt(this.getAttribute('data-start') || '0', 10);
-      var endIdx = parseInt(this.getAttribute('data-end') || '0', 10);
-      
-      clearAllHighlights();
-      
-      // Highlight messages in the range
-      for (var i = startIdx; i <= endIdx; i++) {
-        var el = document.getElementById('msg-' + i);
-        if (el) el.classList.add('tag-highlight');
+    var anchorLocal = null;
+    var rangeStartLocal = null;
+    var rangeEndLocal = null;
+
+    var todayEls = Array.prototype.slice.call(document.querySelectorAll('.msg-cell[data-is-today=\"1\"]'));
+    var globalByLocal = {};
+    todayEls.forEach(function (el) {
+      var li = parseInt(el.getAttribute('data-today-idx') || '', 10);
+      var gi = parseInt(el.getAttribute('data-global-idx') || '', 10);
+      if (!isNaN(li) && !isNaN(gi)) globalByLocal[li] = gi;
+    });
+
+    var hintTimer = null;
+    function flashHint(msg) {
+      if (!elHint) return;
+      elHint.textContent = msg || '';
+      elHint.classList.remove('hidden');
+      if (hintTimer) clearTimeout(hintTimer);
+      hintTimer = setTimeout(function () {
+        elHint.textContent = '';
+        elHint.classList.add('hidden');
+      }, 1800);
+    }
+
+    function clearCiteSelection() {
+      anchorLocal = null;
+      rangeStartLocal = null;
+      rangeEndLocal = null;
+      if (inStart) inStart.value = '';
+      if (inEnd) inEnd.value = '';
+      if (elRange) elRange.textContent = '未选择（必选）';
+      todayEls.forEach(function (el) {
+        el.classList.remove('cite-selected');
+        el.classList.remove('cite-boundary');
+      });
+      updateSubmitState();
+    }
+
+    function updateSubmitState() {
+      if (!btnSubmit) return;
+      var okTag = !!(selTag && selTag.value);
+      var okRange = !!((inStart && inStart.value !== '') && (inEnd && inEnd.value !== ''));
+      btnSubmit.disabled = !(okTag && okRange);
+      if (elHelp) {
+        var msg = '';
+        if (!okRange) msg = '引用范围必选：请先在左侧选择当日消息';
+        else if (!okTag) msg = '请先选择标签';
+        elHelp.textContent = msg;
+        elHelp.classList.toggle('hidden', !msg);
+      }
+      if (elRange) {
+        if (!okRange) {
+          elRange.classList.add('text-amber-700');
+          elRange.classList.remove('text-slate-700');
+        } else {
+          elRange.classList.remove('text-amber-700');
+          elRange.classList.add('text-slate-700');
+        }
+      }
+    }
+
+    function setCiteRange(startLocal, endLocal) {
+      if (startLocal === null || endLocal === null) return;
+      var s = Math.min(startLocal, endLocal);
+      var e = Math.max(startLocal, endLocal);
+      rangeStartLocal = s;
+      rangeEndLocal = e;
+
+      if (inStart) inStart.value = String(s);
+      if (inEnd) inEnd.value = String(e);
+
+      // Highlight selected range (today only)
+      todayEls.forEach(function (el) {
+        var li = parseInt(el.getAttribute('data-today-idx') || '', 10);
+        if (isNaN(li)) return;
+        var inRange = (li >= s && li <= e);
+        el.classList.toggle('cite-selected', inRange);
+        el.classList.toggle('cite-boundary', inRange && (li === s || li === e));
+      });
+
+      // Display as global indices to match UI numbering
+      var gs = globalByLocal[s];
+      var ge = globalByLocal[e];
+      if (elRange) {
+        if (gs === undefined || ge === undefined) {
+          elRange.textContent = '已选择（当日）';
+        } else if (gs === ge) {
+          elRange.textContent = '#' + String(gs);
+        } else {
+          elRange.textContent = '#' + String(gs) + ' ~ #' + String(ge);
+        }
+      }
+
+      updateSubmitState();
+    }
+
+    // Bind clear
+    if (btnClear) btnClear.addEventListener('click', function () { clearCiteSelection(); });
+    if (selTag) selTag.addEventListener('change', function () { updateSubmitState(); });
+    form.addEventListener('submit', function (e) {
+      updateSubmitState();
+      if (btnSubmit && btnSubmit.disabled) {
+        e.preventDefault();
+        flashHint('请先选择标签并选择引用范围');
       }
     });
-  });
+
+    // Click message to select cite range (today only)
+    document.querySelectorAll('.msg-cell').forEach(function (cell) {
+      cell.addEventListener('click', function (ev) {
+        var isToday = this.getAttribute('data-is-today') === '1';
+        if (!isToday) {
+          flashHint('仅支持选择“当日”范围内的消息作为引用');
+          return;
+        }
+        var li = parseInt(this.getAttribute('data-today-idx') || '', 10);
+        if (isNaN(li)) return;
+
+        if (anchorLocal === null) {
+          anchorLocal = li;
+          setCiteRange(li, li);
+          return;
+        }
+
+        // Shift-click: adjust range end using the same anchor
+        if (ev && ev.shiftKey) {
+          setCiteRange(anchorLocal, li);
+          return;
+        }
+
+        // Single -> range (2nd click). After a range is set, normal click resets selection.
+        if (rangeStartLocal !== null && rangeEndLocal !== null && rangeStartLocal === rangeEndLocal && li !== anchorLocal) {
+          setCiteRange(anchorLocal, li);
+          return;
+        }
+
+        anchorLocal = li;
+        setCiteRange(li, li);
+      });
+    });
+
+    // Init
+    clearCiteSelection();
+  }
 })();
 </script>
 <style>
+#tagAddDialog::backdrop { background: rgba(15, 23, 42, 0.45); }
 .msg-cell.tag-highlight { box-shadow: 0 0 0 2px rgb(59 130 246); background-color: rgb(219 234 254) !important; }
-.tag-system-btn.tag-selected { box-shadow: 0 0 0 2px rgb(59 130 246); }
-.tag-system-btn.tag-hit.tag-selected { box-shadow: 0 0 0 2px rgb(22 163 74); }
+.tag-evidence-btn.tag-selected { box-shadow: 0 0 0 2px rgb(59 130 246); }
+.msg-cell.cite-selected { box-shadow: 0 0 0 2px rgb(245 158 11); }
+.msg-cell.cite-boundary { box-shadow: 0 0 0 2px rgb(217 119 6); }
 </style>
 {% endblock %}
