@@ -14,8 +14,8 @@
   <div class="mb-4 p-3 rounded-xl border bg-slate-900 text-white text-sm">{{ flash }}</div>
 {% endif %}
 
-<div class="relative">
-  <div id="pivot-sidebar" class="bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:fixed lg:left-6 lg:top-24 lg:w-64">
+<div class="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-6">
+  <div id="pivot-sidebar" class="bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:sticky lg:top-24 lg:self-start">
     <div class="flex items-start justify-between gap-3">
       <div>
         <div class="font-medium">行维度</div>
@@ -64,7 +64,7 @@
     <div class="mt-3 text-xs text-slate-500">提示：每一层都会自动带上「标签一级分类」和「标签」。</div>
   </div>
 
-  <div class="lg:pl-72">
+  <div class="min-w-0">
     <div class="bg-white border rounded-2xl p-4" id="pivot-filter-card">
   <form id="pivot-filters" class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end" onsubmit="return false;">
     <div class="md:col-span-2">
@@ -148,8 +148,8 @@
     </div>
   </form>
   <div class="mt-3 flex flex-wrap items-center gap-2">
-    <button id="toggle-mom" type="button" class="px-3 py-1.5 rounded-lg border text-sm">环比</button>
-    <button id="toggle-yoy" type="button" class="px-3 py-1.5 rounded-lg border text-sm">同比</button>
+    <button id="toggle-mom" type="button" class="px-2.5 py-1 rounded-lg border text-xs">环比</button>
+    <button id="toggle-yoy" type="button" class="px-2.5 py-1 rounded-lg border text-xs">同比</button>
     <button id="manual-refresh" type="button" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">刷新</button>
     <div id="period-label" class="text-xs text-slate-500"></div>
   </div>
@@ -158,23 +158,112 @@
     <div class="mt-4 bg-white border rounded-2xl p-4">
       <div id="pivot-loading" class="text-sm text-slate-500">加载中...</div>
       <div id="pivot-empty" class="text-sm text-slate-500 hidden">暂无数据（可能是还没有AI命中标签，或筛选条件过窄）</div>
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto pb-2">
+        <style>
+          /* 标签报表：突出4列主指标，弱化环比/同比列，减少拥挤感 */
+          #pivot-table {
+            width: 100%;
+            min-width: 0;
+            table-layout: fixed;
+          }
+          #pivot-table thead th {
+            white-space: normal;
+            line-height: 1.15;
+          }
+          #pivot-table th.dim-col,
+          #pivot-table td.dim-col {
+            width: clamp(190px, 20vw, 240px);
+            min-width: 190px;
+            max-width: 240px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            position: sticky;
+            left: 0;
+            z-index: 12;
+            border-right: 1px solid #e2e8f0;
+          }
+          #pivot-table thead th.dim-col {
+            background: #ffffff;
+          }
+          #pivot-table tbody td.dim-col {
+            background: #ffffff;
+          }
+          #pivot-table tbody tr.bg-slate-50 td.dim-col {
+            background: #f8fafc;
+          }
+          #pivot-table th.col-main {
+            background: rgba(248, 250, 252, 0.9);
+            font-weight: 700;
+            color: #0f172a;
+          }
+          #pivot-table td.col-main {
+            font-weight: 600;
+            color: #0f172a;
+          }
+          #pivot-table .col-group-start {
+            border-left: 1px solid #e2e8f0;
+            padding-left: 0.5rem;
+          }
+          #pivot-table th.col-delta,
+          #pivot-table td.col-delta {
+            font-size: 12px;
+            color: #64748b;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            width: 60px;
+            min-width: 60px;
+            padding-right: 0.5rem;
+          }
+          #pivot-table th.col-delta {
+            font-size: 11px;
+            letter-spacing: 0.02em;
+          }
+          #pivot-table th.col-main,
+          #pivot-table td.col-main {
+            width: 96px;
+            min-width: 96px;
+          }
+          #pivot-table td.dim-col button,
+          #pivot-table td.dim-col a,
+          #pivot-table td.dim-col span {
+            white-space: nowrap;
+          }
+          @media (max-width: 1024px) {
+            #pivot-table th.dim-col,
+            #pivot-table td.dim-col {
+              width: 180px;
+              min-width: 180px;
+              max-width: 200px;
+            }
+            #pivot-table th.col-main,
+            #pivot-table td.col-main {
+              width: 88px;
+              min-width: 88px;
+            }
+            #pivot-table th.col-delta,
+            #pivot-table td.col-delta {
+              width: 54px;
+              min-width: 54px;
+            }
+          }
+        </style>
         <table class="min-w-full text-sm" id="pivot-table">
           <thead>
             <tr class="text-left border-b">
-              <th class="py-2 pr-4">维度</th>
-              <th class="py-2 pr-4" title="质检对话数（去重）：在当前行维度范围内的去重对话数（按对话ID去重；每个对话只取最新一条AI质检分析）。标签/标签分类行则表示命中该标签范围内的去重对话数。">质检对话数</th>
-              <th class="py-2 pr-4 col-mom">对话数环比</th>
-              <th class="py-2 pr-4 col-yoy">对话数同比</th>
-              <th class="py-2 pr-4" title="对话数占比 = 质检对话数（去重） / 总质检对话数（在当前筛选条件下，全部质检过的去重对话总数；汇总=100%）。">对话数占比</th>
-              <th class="py-2 pr-4 col-mom">对话占比环比</th>
-              <th class="py-2 pr-4 col-yoy">对话占比同比</th>
-              <th class="py-2 pr-4" title="标签命中数：按对话ID去重（每个对话只取最新一条AI质检分析）；同一对话命中多个标签会分别计入多个标签，因此上层汇总可能超过总对话数。">标签命中数</th>
-              <th class="py-2 pr-4 col-mom">数量环比</th>
-              <th class="py-2 pr-4 col-yoy">数量同比</th>
-              <th class="py-2 pr-4" title="标签占比 = 标签命中数 / 总质检对话数（在当前行维度+筛选条件下的总对话数）。此口径保持不变。">标签占比</th>
-              <th class="py-2 pr-4 col-mom">标签占比环比</th>
-              <th class="py-2 pr-4 col-yoy">标签占比同比</th>
+              <th class="py-2 pr-4 dim-col">维度</th>
+              <th class="py-2 pr-4 col-main col-group-start" title="质检对话数（去重）：在当前行维度范围内的去重对话数（按对话ID去重；每个对话只取最新一条AI质检分析）。标签/标签分类行则表示命中该标签范围内的去重对话数。">质检对话数</th>
+              <th class="py-2 pr-4 col-mom col-delta" title="质检对话数环比">环比</th>
+              <th class="py-2 pr-4 col-yoy col-delta" title="质检对话数同比">同比</th>
+              <th class="py-2 pr-4 col-main col-group-start" title="对话数占比 = 质检对话数（去重） / 总质检对话数（在当前筛选条件下，全部质检过的去重对话总数；汇总=100%）。">对话数占比</th>
+              <th class="py-2 pr-4 col-mom col-delta" title="对话数占比环比">环比</th>
+              <th class="py-2 pr-4 col-yoy col-delta" title="对话数占比同比">同比</th>
+              <th class="py-2 pr-4 col-main col-group-start" title="标签命中数：按对话ID去重（每个对话只取最新一条AI质检分析）；同一对话命中多个标签会分别计入多个标签，因此上层汇总可能超过总对话数。">标签命中数</th>
+              <th class="py-2 pr-4 col-mom col-delta" title="标签命中数环比">环比</th>
+              <th class="py-2 pr-4 col-yoy col-delta" title="标签命中数同比">同比</th>
+              <th class="py-2 pr-4 col-main col-group-start" title="标签占比 = 标签命中数 / 总质检对话数（在当前行维度+筛选条件下的总对话数）。此口径保持不变。">标签占比</th>
+              <th class="py-2 pr-4 col-mom col-delta" title="标签占比环比">环比</th>
+              <th class="py-2 pr-4 col-yoy col-delta" title="标签占比同比">同比</th>
             </tr>
           </thead>
           <tbody id="pivot-body"></tbody>
@@ -209,7 +298,29 @@
       <button type="button" class="px-3 py-1.5 rounded-lg bg-white border text-sm" onclick="closeCidList()">关闭</button>
     </div>
     <div id="cid-list-loading" class="text-sm text-slate-500">加载中...</div>
-    <div id="cid-list-content" class="overflow-y-auto flex-1 text-sm flex flex-wrap gap-2 hidden"></div>
+    <div id="cid-list-empty" class="text-sm text-slate-500 hidden">暂无数据</div>
+    <div id="cid-list-content" class="overflow-x-auto overflow-y-auto flex-1 hidden">
+      <table class="min-w-full text-sm">
+        <thead class="sticky top-0 bg-white border-b">
+          <tr class="text-left text-xs text-slate-500">
+            <th class="py-2 pr-3 whitespace-nowrap">时间</th>
+            <th class="py-2 pr-3 whitespace-nowrap">CID</th>
+            <th class="py-2 pr-3 whitespace-nowrap">平台</th>
+            <th class="py-2 pr-3 whitespace-nowrap">客服</th>
+            <th class="py-2 pr-3 whitespace-nowrap">买家ID</th>
+            <th class="py-2 pr-3 whitespace-nowrap">消息数</th>
+            <th class="py-2 pr-3 whitespace-nowrap">场景</th>
+            <th class="py-2 pr-3 whitespace-nowrap">满意度</th>
+          </tr>
+        </thead>
+        <tbody id="cid-list-tbody" class="divide-y"></tbody>
+      </table>
+    </div>
+    <div id="cid-list-pager" class="mt-3 flex items-center justify-between text-xs text-slate-500 hidden">
+      <button id="cid-prev" type="button" class="px-2.5 py-1 rounded-lg border bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">上一页</button>
+      <div id="cid-page-info" class="whitespace-nowrap"></div>
+      <button id="cid-next" type="button" class="px-2.5 py-1 rounded-lg border bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">下一页</button>
+    </div>
   </div>
 </div>
 
@@ -564,8 +675,8 @@
   function updateToggleButtons() {
     const momBtn = document.getElementById("toggle-mom");
     const yoyBtn = document.getElementById("toggle-yoy");
-    momBtn.className = state.show_mom ? "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm" : "px-3 py-1.5 rounded-lg border text-sm";
-    yoyBtn.className = state.show_yoy ? "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm" : "px-3 py-1.5 rounded-lg border text-sm";
+    momBtn.className = state.show_mom ? "px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs" : "px-2.5 py-1 rounded-lg border text-xs";
+    yoyBtn.className = state.show_yoy ? "px-2.5 py-1 rounded-lg bg-slate-900 text-white text-xs" : "px-2.5 py-1 rounded-lg border text-xs";
     updateColumnVisibility();
   }
 
@@ -898,6 +1009,16 @@
     return `${sign}${diff} (${sign}${pct.toFixed(0)}%)`;
   }
 
+  function formatDeltaCompact(cur, base) {
+    if (!base || base <= 0) {
+      return cur <= 0 ? "—" : `+${cur}`;
+    }
+    const diff = cur - base;
+    const pct = (diff / base) * 100;
+    const sign = diff >= 0 ? "+" : "";
+    return `${sign}${pct.toFixed(0)}%`;
+  }
+
   function formatRatio(value) {
     if (value === null || value === undefined || isNaN(value)) return "—";
     return `${value.toFixed(2)}%`;
@@ -911,6 +1032,15 @@
     const pct = (diff / base) * 100;
     const sign = diff >= 0 ? "+" : "";
     return `${sign}${diff.toFixed(2)}pp (${sign}${pct.toFixed(0)}%)`;
+  }
+
+  function formatRatioDeltaCompact(cur, base) {
+    if (base === null || base === undefined || base <= 0 || isNaN(base)) {
+      return cur <= 0 ? "—" : `+${cur.toFixed(2)}pp`;
+    }
+    const diff = cur - base;
+    const sign = diff >= 0 ? "+" : "";
+    return `${sign}${diff.toFixed(2)}pp`;
   }
 
   function getEffectiveRowFields() {
@@ -1064,12 +1194,13 @@
       tr.dataset.isHeader = r.is_header ? "True" : "False";
 
       const nameTd = document.createElement("td");
-      nameTd.className = "py-2 pr-4";
+      nameTd.className = "py-2 pr-4 dim-col";
+      nameTd.title = r.label || "";
 
       if (r.is_header) {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "text-left w-full";
+        btn.className = "text-left w-full truncate";
         btn.style.paddingLeft = `${r.level * 20}px`;
         const ico = document.createElement("span");
         ico.id = `ico-${r.id}`;
@@ -1121,37 +1252,67 @@
       }
 
       const qcTd = document.createElement("td");
-      qcTd.className = "py-2 pr-4";
-      qcTd.textContent = qcCur;
+      qcTd.className = "py-2 pr-4 col-main col-group-start";
+      const qcCanClick = qcCur > 0;
+      if (qcCanClick) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "underline text-blue-600 hover:text-blue-800";
+        btn.textContent = qcCur;
+        if (r.tag_id) btn.dataset.tagId = r.tag_id;
+        if (r.dims && r.dims.category_id) btn.dataset.categoryId = r.dims.category_id;
+        btn.dataset.platform = (r.dims && r.dims.platform) ? r.dims.platform : "";
+        btn.dataset.agentUserId = (r.dims && r.dims.agent_user_id) ? r.dims.agent_user_id : "";
+        btn.dataset.scenario = (r.dims && r.dims.reception_scenario) ? r.dims.reception_scenario : "";
+        btn.dataset.satisfaction = (r.dims && r.dims.satisfaction_change) ? r.dims.satisfaction_change : "";
+        btn.addEventListener("click", () => showQcCids(btn));
+        qcTd.appendChild(btn);
+      } else {
+        qcTd.textContent = qcCur;
+      }
 
       const qcMomTd = document.createElement("td");
-      qcMomTd.className = "py-2 pr-4 col-mom";
-      qcMomTd.textContent = pivotData.period && pivotData.period.prev_label ? formatDelta(qcCur, qcPrev) : "—";
+      qcMomTd.className = "py-2 pr-4 col-mom col-delta";
+      if (pivotData.period && pivotData.period.prev_label) {
+        qcMomTd.textContent = formatDeltaCompact(qcCur, qcPrev);
+        qcMomTd.title = formatDelta(qcCur, qcPrev);
+      } else {
+        qcMomTd.textContent = "—";
+      }
 
       const qcYoyTd = document.createElement("td");
-      qcYoyTd.className = "py-2 pr-4 col-yoy";
-      qcYoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatDelta(qcCur, qcYoy) : "—";
+      qcYoyTd.className = "py-2 pr-4 col-yoy col-delta";
+      if (pivotData.period && pivotData.period.yoy_label) {
+        qcYoyTd.textContent = formatDeltaCompact(qcCur, qcYoy);
+        qcYoyTd.title = formatDelta(qcCur, qcYoy);
+      } else {
+        qcYoyTd.textContent = "—";
+      }
 
       const qcShareTd = document.createElement("td");
-      qcShareTd.className = "py-2 pr-4";
+      qcShareTd.className = "py-2 pr-4 col-main col-group-start";
       qcShareTd.textContent = formatRatio(qcShareCur);
 
       const qcShareMomTd = document.createElement("td");
-      qcShareMomTd.className = "py-2 pr-4 col-mom";
-      qcShareMomTd.textContent =
-        pivotData.period && pivotData.period.prev_label && qcShareCur !== null && qcSharePrev !== null
-          ? formatRatioDelta(qcShareCur, qcSharePrev)
-          : "—";
+      qcShareMomTd.className = "py-2 pr-4 col-mom col-delta";
+      if (pivotData.period && pivotData.period.prev_label && qcShareCur !== null && qcSharePrev !== null) {
+        qcShareMomTd.textContent = formatRatioDeltaCompact(qcShareCur, qcSharePrev);
+        qcShareMomTd.title = formatRatioDelta(qcShareCur, qcSharePrev);
+      } else {
+        qcShareMomTd.textContent = "—";
+      }
 
       const qcShareYoyTd = document.createElement("td");
-      qcShareYoyTd.className = "py-2 pr-4 col-yoy";
-      qcShareYoyTd.textContent =
-        pivotData.period && pivotData.period.yoy_label && qcShareCur !== null && qcShareYoy !== null
-          ? formatRatioDelta(qcShareCur, qcShareYoy)
-          : "—";
+      qcShareYoyTd.className = "py-2 pr-4 col-yoy col-delta";
+      if (pivotData.period && pivotData.period.yoy_label && qcShareCur !== null && qcShareYoy !== null) {
+        qcShareYoyTd.textContent = formatRatioDeltaCompact(qcShareCur, qcShareYoy);
+        qcShareYoyTd.title = formatRatioDelta(qcShareCur, qcShareYoy);
+      } else {
+        qcShareYoyTd.textContent = "—";
+      }
 
       const countTd = document.createElement("td");
-      countTd.className = "py-2 pr-4";
+      countTd.className = "py-2 pr-4 col-main col-group-start";
       const canClick = r.tag_id && r.metrics.current > 0;
       if (canClick) {
         const btn = document.createElement("button");
@@ -1170,24 +1331,44 @@
       }
 
       const momTd = document.createElement("td");
-      momTd.className = "py-2 pr-4 col-mom";
-      momTd.textContent = pivotData.period && pivotData.period.prev_label ? formatDelta(r.metrics.current, r.metrics.prev) : "—";
+      momTd.className = "py-2 pr-4 col-mom col-delta";
+      if (pivotData.period && pivotData.period.prev_label) {
+        momTd.textContent = formatDeltaCompact(r.metrics.current, r.metrics.prev);
+        momTd.title = formatDelta(r.metrics.current, r.metrics.prev);
+      } else {
+        momTd.textContent = "—";
+      }
 
       const yoyTd = document.createElement("td");
-      yoyTd.className = "py-2 pr-4 col-yoy";
-      yoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatDelta(r.metrics.current, r.metrics.yoy) : "—";
+      yoyTd.className = "py-2 pr-4 col-yoy col-delta";
+      if (pivotData.period && pivotData.period.yoy_label) {
+        yoyTd.textContent = formatDeltaCompact(r.metrics.current, r.metrics.yoy);
+        yoyTd.title = formatDelta(r.metrics.current, r.metrics.yoy);
+      } else {
+        yoyTd.textContent = "—";
+      }
 
       const ratioTd = document.createElement("td");
-      ratioTd.className = "py-2 pr-4";
+      ratioTd.className = "py-2 pr-4 col-main col-group-start";
       ratioTd.textContent = formatRatio(totals.current > 0 ? ratioCur : null);
 
       const ratioMomTd = document.createElement("td");
-      ratioMomTd.className = "py-2 pr-4 col-mom";
-      ratioMomTd.textContent = pivotData.period && pivotData.period.prev_label ? formatRatioDelta(ratioCur, ratioPrev) : "—";
+      ratioMomTd.className = "py-2 pr-4 col-mom col-delta";
+      if (pivotData.period && pivotData.period.prev_label) {
+        ratioMomTd.textContent = formatRatioDeltaCompact(ratioCur, ratioPrev);
+        ratioMomTd.title = formatRatioDelta(ratioCur, ratioPrev);
+      } else {
+        ratioMomTd.textContent = "—";
+      }
 
       const ratioYoyTd = document.createElement("td");
-      ratioYoyTd.className = "py-2 pr-4 col-yoy";
-      ratioYoyTd.textContent = pivotData.period && pivotData.period.yoy_label ? formatRatioDelta(ratioCur, ratioYoy) : "—";
+      ratioYoyTd.className = "py-2 pr-4 col-yoy col-delta";
+      if (pivotData.period && pivotData.period.yoy_label) {
+        ratioYoyTd.textContent = formatRatioDeltaCompact(ratioCur, ratioYoy);
+        ratioYoyTd.title = formatRatioDelta(ratioCur, ratioYoy);
+      } else {
+        ratioYoyTd.textContent = "—";
+      }
 
       tr.appendChild(nameTd);
       tr.appendChild(qcTd);
@@ -1480,6 +1661,167 @@
     if (e.target && e.target.id === "rule-modal") closeRule();
   });
 
+  const cidListState = {
+    params: null,
+    page: 1,
+    per_page: 20,
+    total: 0,
+    title_base: "对话列表",
+  };
+
+  function renderCidListRows(items) {
+    const tbody = document.getElementById("cid-list-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    (items || []).forEach(item => {
+      const tr = document.createElement("tr");
+      tr.className = "hover:bg-slate-50";
+
+      const tdTime = document.createElement("td");
+      tdTime.className = "py-2 pr-3 whitespace-nowrap text-slate-700";
+      tdTime.textContent = item.event_time || "";
+      tdTime.title = [
+        item.started_at ? ("开始: " + item.started_at) : "",
+        item.ended_at ? ("结束: " + item.ended_at) : "",
+        item.uploaded_at ? ("上传: " + item.uploaded_at) : "",
+      ].filter(Boolean).join(" · ");
+
+      const tdCid = document.createElement("td");
+      tdCid.className = "py-2 pr-3 whitespace-nowrap";
+      const a = document.createElement("a");
+      a.href = "#";
+      a.className = "cid-link text-indigo-600 hover:underline";
+      a.dataset.cid = String(item.cid || "");
+      a.textContent = "CID=" + String(item.cid || "");
+      tdCid.appendChild(a);
+
+      const tdPlatform = document.createElement("td");
+      tdPlatform.className = "py-2 pr-3 whitespace-nowrap";
+      tdPlatform.textContent = item.platform || "";
+
+      const tdAgent = document.createElement("td");
+      tdAgent.className = "py-2 pr-3 whitespace-nowrap";
+      tdAgent.textContent = item.agent_name || item.agent_account || "";
+
+      const tdBuyer = document.createElement("td");
+      tdBuyer.className = "py-2 pr-3 whitespace-nowrap";
+      tdBuyer.textContent = item.buyer_id || "";
+
+      const tdMsg = document.createElement("td");
+      tdMsg.className = "py-2 pr-3 whitespace-nowrap text-slate-700";
+      tdMsg.textContent = (item.message_count === null || item.message_count === undefined) ? "" : String(item.message_count);
+
+      const tdScenario = document.createElement("td");
+      tdScenario.className = "py-2 pr-3 whitespace-nowrap";
+      tdScenario.textContent = item.reception_scenario || "";
+
+      const tdSatis = document.createElement("td");
+      tdSatis.className = "py-2 pr-3 whitespace-nowrap";
+      tdSatis.textContent = item.satisfaction_change || "";
+
+      tr.appendChild(tdTime);
+      tr.appendChild(tdCid);
+      tr.appendChild(tdPlatform);
+      tr.appendChild(tdAgent);
+      tr.appendChild(tdBuyer);
+      tr.appendChild(tdMsg);
+      tr.appendChild(tdScenario);
+      tr.appendChild(tdSatis);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function updateCidPager() {
+    const pager = document.getElementById("cid-list-pager");
+    const info = document.getElementById("cid-page-info");
+    const prevBtn = document.getElementById("cid-prev");
+    const nextBtn = document.getElementById("cid-next");
+    if (!pager || !info || !prevBtn || !nextBtn) return;
+
+    const total = Number(cidListState.total || 0);
+    const perPage = Number(cidListState.per_page || 20);
+    const page = Number(cidListState.page || 1);
+    const totalPages = total > 0 ? Math.ceil(total / perPage) : 1;
+
+    if (total <= 0) {
+      pager.classList.add("hidden");
+      return;
+    }
+    pager.classList.remove("hidden");
+
+    info.textContent = `第 ${page} / ${totalPages} 页 · 共 ${total} 条`;
+    prevBtn.disabled = page <= 1;
+    nextBtn.disabled = page >= totalPages;
+  }
+
+  function setCidListLoading(isLoading) {
+    const loading = document.getElementById("cid-list-loading");
+    const empty = document.getElementById("cid-list-empty");
+    const content = document.getElementById("cid-list-content");
+    const pager = document.getElementById("cid-list-pager");
+    if (isLoading) {
+      loading.classList.remove("hidden");
+      empty.classList.add("hidden");
+      content.classList.add("hidden");
+      if (pager) pager.classList.add("hidden");
+      return;
+    }
+    loading.classList.add("hidden");
+  }
+
+  async function loadCidListPage(page) {
+    if (!cidListState.params) return;
+    cidListState.page = page;
+    const params = new URLSearchParams(cidListState.params.toString());
+    params.set("page", String(cidListState.page));
+    params.set("per_page", String(cidListState.per_page));
+
+    setCidListLoading(true);
+    try {
+      const response = await fetch("/api/reports/tags/conversations?" + params.toString());
+      const data = await response.json();
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      const cids = Array.isArray(data.cids) ? data.cids : [];
+      const total = (data.total !== undefined && data.total !== null) ? Number(data.total) : (items.length || cids.length);
+      cidListState.total = isNaN(total) ? (items.length || cids.length) : total;
+
+      const title = document.getElementById("cid-list-title");
+      const baseTitle = cidListState.title_base || "对话列表";
+      if (title) title.textContent = `${baseTitle}（共 ${cidListState.total} 条）`;
+
+      const empty = document.getElementById("cid-list-empty");
+      const content = document.getElementById("cid-list-content");
+      if ((items && items.length > 0) || (cids && cids.length > 0)) {
+        const normalized = items.length > 0
+          ? items
+          : cids.map(cid => ({ cid, event_time: "", platform: "", agent_name: "", buyer_id: "", message_count: "", reception_scenario: "", satisfaction_change: "" }));
+        renderCidListRows(normalized);
+        empty.classList.add("hidden");
+        content.classList.remove("hidden");
+      } else {
+        renderCidListRows([]);
+        content.classList.add("hidden");
+        empty.classList.remove("hidden");
+      }
+
+      setCidListLoading(false);
+      updateCidPager();
+    } catch (error) {
+      const empty = document.getElementById("cid-list-empty");
+      const content = document.getElementById("cid-list-content");
+      const loading = document.getElementById("cid-list-loading");
+      if (loading) loading.classList.add("hidden");
+      if (content) content.classList.add("hidden");
+      if (empty) {
+        empty.textContent = "加载失败：" + (error && error.message ? error.message : String(error));
+        empty.classList.remove("hidden");
+      }
+      cidListState.total = 0;
+      updateCidPager();
+    }
+  }
+
   async function showTagCids(btn) {
     const tagId = btn.getAttribute("data-tag-id");
     if (!tagId) return;
@@ -1499,47 +1841,80 @@
     if (scenario) params.append("reception_scenario", scenario);
     if (satisfaction) params.append("satisfaction_change", satisfaction);
 
+    await openCidList(params, "命中标签的对话列表");
+  }
+
+  async function showQcCids(btn) {
+    const tagId = btn.getAttribute("data-tag-id") || "";
+    const categoryId = btn.getAttribute("data-category-id") || "";
+    const platform = btn.getAttribute("data-platform");
+    const agentUserId = btn.getAttribute("data-agent-user-id");
+    const scenario = btn.getAttribute("data-scenario");
+    const satisfaction = btn.getAttribute("data-satisfaction");
+
+    const params = new URLSearchParams();
+    let titleBase = "质检对话列表";
+    if (tagId) {
+      params.append("tag_id", tagId);
+      titleBase = "命中标签的对话列表";
+    } else if (categoryId) {
+      params.append("category_id", categoryId);
+      titleBase = "命中标签分类的对话列表";
+    }
+
+    const start = document.getElementById("start-date").value;
+    const end = document.getElementById("end-date").value;
+    if (start) params.append("start", start);
+    if (end) params.append("end", end);
+    if (platform) params.append("platform", platform);
+    if (agentUserId) params.append("agent_user_id", agentUserId);
+    if (scenario) params.append("reception_scenario", scenario);
+    if (satisfaction) params.append("satisfaction_change", satisfaction);
+
+    await openCidList(params, titleBase);
+  }
+
+  async function openCidList(params, titleBase) {
     const modal = document.getElementById("cid-list-modal");
-    const loading = document.getElementById("cid-list-loading");
-    const content = document.getElementById("cid-list-content");
     const title = document.getElementById("cid-list-title");
 
     modal.classList.remove("hidden");
     modal.classList.add("flex");
-    loading.classList.remove("hidden");
-    content.classList.add("hidden");
 
-    try {
-      const response = await fetch("/api/reports/tags/conversations?" + params.toString());
-      const data = await response.json();
+    cidListState.title_base = titleBase || "对话列表";
+    if (title) title.textContent = cidListState.title_base;
 
-      title.textContent = `命中标签的对话列表（共 ${data.cids.length} 个）`;
-
-      if (data.cids.length === 0) {
-        content.innerHTML = '<div class="text-sm text-slate-500">暂无数据</div>';
-      } else {
-        content.innerHTML = data.cids.map(cid =>
-          `<a href="#" class="cid-link text-blue-600 hover:underline" data-cid="${cid}">CID=${cid}</a>`
-        ).join(" ");
-      }
-
-      loading.classList.add("hidden");
-      content.classList.remove("hidden");
-    } catch (error) {
-      content.innerHTML = '<div class="text-sm text-red-600">加载失败：' + error.message + "</div>";
-      loading.classList.add("hidden");
-      content.classList.remove("hidden");
-    }
+    cidListState.params = params;
+    cidListState.page = 1;
+    cidListState.total = 0;
+    setCidListLoading(true);
+    await loadCidListPage(1);
   }
 
   function closeCidList() {
     const modal = document.getElementById("cid-list-modal");
     modal.classList.add("hidden");
     modal.classList.remove("flex");
+    cidListState.params = null;
+    cidListState.page = 1;
+    cidListState.total = 0;
+    cidListState.title_base = "对话列表";
+    const empty = document.getElementById("cid-list-empty");
+    if (empty) empty.textContent = "暂无数据";
   }
 
   document.getElementById("cid-list-modal")?.addEventListener("click", function(e){
     if (e.target && e.target.id === "cid-list-modal") closeCidList();
+  });
+
+  document.getElementById("cid-prev")?.addEventListener("click", function () {
+    if (cidListState.page > 1) loadCidListPage(cidListState.page - 1);
+  });
+  document.getElementById("cid-next")?.addEventListener("click", function () {
+    const total = Number(cidListState.total || 0);
+    const perPage = Number(cidListState.per_page || 20);
+    const totalPages = total > 0 ? Math.ceil(total / perPage) : 1;
+    if (cidListState.page < totalPages) loadCidListPage(cidListState.page + 1);
   });
 
   loadState();

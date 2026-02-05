@@ -5579,6 +5579,7 @@ def tags_report_page(
         request,
         "tags_report.html",
         user=user,
+        wide_layout=True,
         flash="",
         time_modes=time_modes,
         filters={
@@ -5935,18 +5936,23 @@ def get_tag_conversations(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
     tag_id: int | None = None,
+    category_id: int | None = None,
     start: str | None = None,
     end: str | None = None,
     platform: str | None = None,
     agent_user_id: str | None = None,
     reception_scenario: str | None = None,
     satisfaction_change: str | None = None,
+    page: int | None = 1,
+    per_page: int | None = 20,
 ):
-    """Get list of conversation IDs that hit a specific tag."""
-    from sqlalchemy import func
+    """标签报表：打开“对应对话列表”（只看每个对话的最新质检）。
 
-    if not tag_id:
-        return {"error": "tag_id is required", "cids": []}
+    - tag_id: 只看命中该标签的对话
+    - category_id: 只看命中该标签分类下任一标签的对话
+    - 两者都不传：只看当前筛选条件下的“已质检对话”（最新质检）
+    """
+    from sqlalchemy import func
 
     def _parse_date(d: str | None):
         if not d:
@@ -5968,6 +5974,8 @@ def get_tag_conversations(
     platform_f = (platform or "").strip()
     scenario_f = (reception_scenario or "").strip()
     satisfaction_f = (satisfaction_change or "").strip()
+    tag_id_i = int(tag_id or 0) or None
+    category_id_i = int(category_id or 0) or None
     agent_user_id_int = None
     try:
         agent_user_id_int = int(agent_user_id) if agent_user_id else None
@@ -5978,42 +5986,168 @@ def get_tag_conversations(
     if user.role == Role.agent:
         agent_user_id_int = user.id
 
+    page_i = 1
+    per_page_i = 20
+    try:
+        page_i = int(page or 1)
+    except Exception:
+        page_i = 1
+    try:
+        per_page_i = int(per_page or 20)
+    except Exception:
+        per_page_i = 20
+    if page_i < 1:
+        page_i = 1
+    if per_page_i < 1:
+        per_page_i = 20
+    if per_page_i > 50:
+        per_page_i = 50
+
     # Get latest analysis per conversation
     latest_subq = (
-        select(func.max(ConversationAnalysis.id).label("analysis_id"))
+        select(
+            ConversationAnalysis.conversation_id.label("cid"),
+            func.max(ConversationAnalysis.id).label("analysis_id"),
+        )
         .group_by(ConversationAnalysis.conversation_id)
     ).subquery()
 
     # Real-time mapping via AgentBinding if exists
     binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
+    event_ts_expr = func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at)
+    event_ts = event_ts_expr.label("event_ts")
+
+    msg_count_subq = (
+        select(Message.conversation_id.label("cid"), func.count(Message.id).label("message_count"))
+        .group_by(Message.conversation_id)
+    ).subquery()
+
+    where_terms = []
+    if start_dt:
+        where_terms.append(event_ts_expr >= start_dt)
+    if end_dt:
+        where_terms.append(event_ts_expr < end_dt)
+    if platform_f:
+        where_terms.append(Conversation.platform == platform_f)
+    if agent_user_id_int:
+        where_terms.append(binding_user_id == agent_user_id_int)
+    if scenario_f:
+        where_terms.append(ConversationAnalysis.reception_scenario == scenario_f)
+    if satisfaction_f:
+        where_terms.append(ConversationAnalysis.satisfaction_change == satisfaction_f)
+
+    if tag_id_i:
+        where_terms.append(
+            exists(
+                select(1)
+                .select_from(ConversationTagHit)
+                .where(
+                    ConversationTagHit.analysis_id == latest_subq.c.analysis_id,
+                    ConversationTagHit.tag_id == tag_id_i,
+                )
+            )
+        )
+    elif category_id_i:
+        where_terms.append(
+            exists(
+                select(1)
+                .select_from(ConversationTagHit)
+                .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
+                .where(
+                    ConversationTagHit.analysis_id == latest_subq.c.analysis_id,
+                    TagDefinition.category_id == category_id_i,
+                )
+            )
+        )
+
+    base_stmt = (
+        select(Conversation.id.label("cid"))
+        .select_from(Conversation)
+        .join(latest_subq, latest_subq.c.cid == Conversation.id)
+        .join(ConversationAnalysis, ConversationAnalysis.id == latest_subq.c.analysis_id)
+        .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
+    )
+    if where_terms:
+        base_stmt = base_stmt.where(*where_terms)
+
+    total = session.exec(select(func.count()).select_from(base_stmt.subquery())).one()
 
     stmt = (
-        select(Conversation.id)
-        .select_from(ConversationTagHit)
-        .join(ConversationAnalysis, ConversationAnalysis.id == ConversationTagHit.analysis_id)
-        .join(Conversation, Conversation.id == ConversationAnalysis.conversation_id)
-        .join(latest_subq, latest_subq.c.analysis_id == ConversationAnalysis.id)
+        select(
+            Conversation.id,
+            Conversation.platform,
+            Conversation.buyer_id,
+            Conversation.agent_account,
+            User.name.label("agent_name"),
+            event_ts,
+            Conversation.started_at,
+            Conversation.ended_at,
+            Conversation.uploaded_at,
+            msg_count_subq.c.message_count,
+            ConversationAnalysis.reception_scenario,
+            ConversationAnalysis.satisfaction_change,
+        )
+        .select_from(Conversation)
+        .join(latest_subq, latest_subq.c.cid == Conversation.id)
+        .join(ConversationAnalysis, ConversationAnalysis.id == latest_subq.c.analysis_id)
         .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
-        .where(ConversationTagHit.tag_id == tag_id)
+        .outerjoin(User, User.id == binding_user_id)
+        .outerjoin(msg_count_subq, msg_count_subq.c.cid == Conversation.id)
     )
 
-    if start_dt:
-        stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) >= start_dt)
-    if end_dt:
-        stmt = stmt.where(func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at) < end_dt)
-    if platform_f:
-        stmt = stmt.where(Conversation.platform == platform_f)
-    if agent_user_id_int:
-        stmt = stmt.where(binding_user_id == agent_user_id_int)
-    if scenario_f:
-        stmt = stmt.where(ConversationAnalysis.reception_scenario == scenario_f)
-    if satisfaction_f:
-        stmt = stmt.where(ConversationAnalysis.satisfaction_change == satisfaction_f)
+    if where_terms:
+        stmt = stmt.where(*where_terms)
 
-    stmt = stmt.order_by(Conversation.id.desc())
-    cids = [row for row in session.exec(stmt).all()]
+    stmt = stmt.order_by(event_ts.desc(), Conversation.id.desc())
+    stmt = stmt.offset((page_i - 1) * per_page_i).limit(per_page_i)
 
-    return {"cids": cids}
+    def _dt_str(dt: datetime | None) -> str:
+        if not dt:
+            return ""
+        try:
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(dt)
+
+    items = []
+    for (
+        cid,
+        plat,
+        buyer_id_v,
+        agent_account_v,
+        agent_name_v,
+        event_ts_v,
+        started_at_v,
+        ended_at_v,
+        uploaded_at_v,
+        message_count_v,
+        scenario_v,
+        satisfaction_v,
+    ) in session.exec(stmt).all():
+        items.append(
+            {
+                "cid": cid,
+                "platform": plat or "",
+                "buyer_id": buyer_id_v or "",
+                "agent_account": agent_account_v or "",
+                "agent_name": agent_name_v or "",
+                "event_time": _dt_str(event_ts_v),
+                "started_at": _dt_str(started_at_v),
+                "ended_at": _dt_str(ended_at_v),
+                "uploaded_at": _dt_str(uploaded_at_v),
+                "message_count": int(message_count_v or 0),
+                "reception_scenario": scenario_v or "",
+                "satisfaction_change": satisfaction_v or "",
+            }
+        )
+
+    return {
+        "total": int(total or 0),
+        "page": page_i,
+        "per_page": per_page_i,
+        "items": items,
+        "cids": [x["cid"] for x in items],
+    }
 
 
 # =========================

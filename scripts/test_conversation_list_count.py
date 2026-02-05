@@ -7,16 +7,33 @@
 """
 
 import sys
-import os
+from pathlib import Path
 
-# Add app directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+# Add app directory to path (兼容：宿主机 repo 根目录运行 / 容器内 /app/scripts 运行)
+root_dir = Path(__file__).resolve().parent.parent
+app_dir = root_dir / "app"
+if app_dir.exists():
+    sys.path.insert(0, str(app_dir))
+else:
+    sys.path.insert(0, str(root_dir))
 
 from datetime import datetime, timedelta
 from sqlalchemy import func, select, and_, or_, exists
 from sqlmodel import Session
 from db import engine
 from models import Conversation, Message
+
+
+def _as_int(v):
+    try:
+        if hasattr(v, "__len__") and len(v) == 1 and hasattr(v, "__getitem__"):
+            v = v[0]
+    except Exception:
+        pass
+    try:
+        return int(v)
+    except Exception:
+        return v
 
 
 def test_count_with_date_filter():
@@ -87,7 +104,7 @@ def test_count_with_date_filter():
             .outerjoin(customer_ts_sq, customer_ts_sq.c.cid == Conversation.id)
             .where(*conv_where)
         )
-        count_with_join = session.exec(count_q).one()
+        count_with_join = _as_int(session.exec(count_q).one())
         
         # 方法2：获取实际的对话列表数量
         list_q = (
@@ -99,9 +116,7 @@ def test_count_with_date_filter():
         actual_count = len(actual_ids)
         
         # 方法3：错误的计数方式（不带 JOIN，模拟修复前的bug）
-        count_without_join = session.exec(
-            select(func.count(Conversation.id)).where(*conv_where)
-        ).one()
+        count_without_join = _as_int(session.exec(select(func.count(Conversation.id)).where(*conv_where)).one())
         
         print(f"\n结果对比：")
         print(f"  修复后的计数（带 JOIN）: {count_with_join}")
@@ -145,11 +160,11 @@ def test_count_with_date_filter():
                 display_ts < (end_dt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
             ]
             
-            count_with_join = session.exec(
+            count_with_join = _as_int(session.exec(
                 select(func.count(Conversation.id))
                 .outerjoin(customer_ts_sq, customer_ts_sq.c.cid == Conversation.id)
                 .where(*conv_where)
-            ).one()
+            ).one())
             
             actual_count = len(session.exec(
                 select(Conversation.id)

@@ -1,0 +1,9 @@
+hit_id,analysis_id,conversation_id,tag_id,tag_name,created_at,reason,evidence_json,buyer_snippet,why_flags
+8068,3392,5853,26,起球,2026-02-02 07:20:03.469624,买家明确提到“起球”，命中产品质量投诉-起球。,"[{""message_index"": 4, ""start_index"": 4, ""end_index"": 4, ""quote"": ""会起球吗""}]",会起球吗,question_like_without_actual_issue
+8824,3757,6709,34,图片/描述与实物不符,2026-02-02 08:54:34.157208,买家反馈实物出现页面/模特图未展示的粉色装饰细节，认为与页面展示不一致。,"[{""message_index"": 6, ""start_index"": 6, ""end_index"": 11, ""quote"": ""我收到的货为啥有粉色呢""}, {""message_index"": 9, ""start_index"": 9, ""end_index"": 11, ""quote"": ""我怎么在模特展示图上没看见有呢""}, {""message_index"": 11, ""start_index"": 11, ""end_index"": 11, ""quote"": ""那网页上的图片看不出来啊""}]","我收到的货为啥有粉色呢
+有吗？？
+我怎么在模特展示图上没看见有呢
+那网页上的图片看不出来啊","question_like_without_actual_issue,delivery_hint_present"
+9236,3930,7149,26,起球,2026-02-02 09:41:37.489579,客户明确反馈商品穿了半天就容易起球，属于起球类质量投诉。,"[{""message_index"": 3, ""start_index"": 3, ""end_index"": 3, ""quote"": ""才穿了半天 很容易起球？""}]",亲 才穿了半天 很容易起球？,"question_like_without_actual_issue,delivery_hint_present"
+9519,4077,7374,29,面料不适（刺痒/扎/闷）,2026-02-02 10:17:23.515039,客户反馈领口扎扎的，属于面料触感导致的刺痒/扎不适。,"[{""message_index"": 7, ""start_index"": 7, ""end_index"": 7, ""quote"": ""领口有点扎扎的""}, {""message_index"": 13, ""start_index"": 13, ""end_index"": 13, ""quote"": ""会有一点点扎扎的感觉""}]",然后领口有点扎扎的，为啥？,question_like_without_actual_issue
+9796,4235,7501,26,起球,2026-02-03 05:09:03.862984,客户直接询问衣服和裤子是否会起球，命中起球相关质量关注。,"[{""message_index"": 8, ""start_index"": 8, ""end_index"": 8, ""quote"": ""这个衣服和裤子会起球吗""}]",这个衣服和裤子会起球吗,question_like_without_actual_issue

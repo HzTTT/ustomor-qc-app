@@ -1,0 +1,21 @@
+hit_id,analysis_id,conversation_id,tag_id,tag_name,created_at,reason,evidence_json,buyer_snippet,why_flags
+2566,1086,812,26,起球,2026-02-01 21:32:58.263095,客户明确提到“起球”。,"[{""message_index"": 27, ""start_index"": 27, ""end_index"": 27, ""quote"": ""为什么都说会起球缩水""}, {""message_index"": 31, ""start_index"": 31, ""end_index"": 31, ""quote"": ""可能会产生起球现象""}]",为什么都说会起球缩水,question_like_without_actual_issue
+2567,1086,812,35,洗后变形/缩水/走样,2026-02-01 21:32:58.263140,客户明确提到“缩水”。,"[{""message_index"": 27, ""start_index"": 27, ""end_index"": 27, ""quote"": ""为什么都说会起球缩水""}, {""message_index"": 32, ""start_index"": 32, ""end_index"": 32, ""quote"": ""羊毛起球和缩水是因为面料特性的关系""}]",为什么都说会起球缩水,question_like_without_actual_issue
+3839,1607,1597,34,图片/描述与实物不符,2026-02-01 23:39:23.466187,买家反馈短款细节与图片/模特展示不一致（扣子不同），属于页面描述/图片与实物细节不符类投诉。,"[{""message_index"": 3, ""start_index"": 3, ""end_index"": 3, ""quote"": ""这个短款怎么跟图片不一样""}, {""message_index"": 6, ""start_index"": 6, ""end_index"": 6, ""quote"": ""扣子跟模特不一样""}]","这个短款怎么跟图片不一样
+扣子跟模特不一样",question_like_without_actual_issue
+5452,2283,2606,26,起球,2026-02-02 02:37:09.917349,客户明确反馈到货后起球/毛球问题。,"[{""message_index"": 2, ""start_index"": 2, ""end_index"": 2, ""quote"": ""刚收到手上面就起了那么多毛球""}, {""message_index"": 5, ""start_index"": 5, ""end_index"": 5, ""quote"": ""毛球是毛球""}, {""message_index"": 9, ""start_index"": 9, ""end_index"": 9, ""quote"": ""起球太多了""}]","亲 怎么刚收到手上面就起了那么多毛球
+绒感是绒感 毛球是毛球
+起球太多了 感觉是被人穿过又退了的","question_like_without_actual_issue,delivery_hint_present"
+8068,3392,5853,26,起球,2026-02-02 07:20:03.469624,买家明确提到“起球”，命中产品质量投诉-起球。,"[{""message_index"": 4, ""start_index"": 4, ""end_index"": 4, ""quote"": ""会起球吗""}]",会起球吗,question_like_without_actual_issue
+8446,3577,6299,34,图片/描述与实物不符,2026-02-02 08:09:39.579783,客户明确反馈领子细节与页面图片不一致，属于描述/图片与实物不符类投诉。,"[{""message_index"": 4, ""start_index"": 4, ""end_index"": 4, ""quote"": ""为什么领子和图片不一样""}, {""message_index"": 7, ""start_index"": 7, ""end_index"": 8, ""quote"": ""图片上是塌下来的领子 / 我的领子竖的好高""}]","为什么领子和图片不一样
+图片上是塌下来的领子
+我的领子竖的好高",question_like_without_actual_issue
+8452,3579,6305,35,洗后变形/缩水/走样,2026-02-02 08:10:22.290104,客户反馈手洗平铺仍出现缩水，属于洗后变形/缩水问题。,"[{""message_index"": 8, ""start_index"": 8, ""end_index"": 8, ""quote"": ""手洗，平铺，还缩水""}, {""message_index"": 20, ""start_index"": 20, ""end_index"": 21, ""quote"": ""缩水的问题怎么解决""}]","每次穿每次都起球，手洗，平铺，还缩水
+缩水的问题怎么解决
+我还是手洗，平铺的呢",question_like_without_actual_issue
+8878,3783,6778,26,起球,2026-02-02 09:01:36.723927,客户明确反馈羽绒服起球，且穿了两三次就出现。,"[{""message_index"": 3, ""start_index"": 3, ""end_index"": 5, ""quote"": ""羽绒服怎么会起球的""}, {""message_index"": 4, ""start_index"": 3, ""end_index"": 5, ""quote"": ""才穿了两三回""}]","/:>O<羽绒服怎么会起球的
+才穿了两三回
+质量也太差了","question_like_without_actual_issue,delivery_hint_present"
+9796,4235,7501,26,起球,2026-02-03 05:09:03.862984,客户直接询问衣服和裤子是否会起球，命中起球相关质量关注。,"[{""message_index"": 8, ""start_index"": 8, ""end_index"": 8, ""quote"": ""这个衣服和裤子会起球吗""}]",这个衣服和裤子会起球吗,question_like_without_actual_issue
+10928,4896,8157,24,色差,2026-02-03 05:50:50.296903,买家明确反馈商品颜色与图片不一致，认为色差很大。,"[{""message_index"": 10, ""start_index"": 10, ""end_index"": 12, ""quote"": ""这个色差也太大了吧""}, {""message_index"": 12, ""start_index"": 12, ""end_index"": 12, ""quote"": ""你们图片是灰色的，这咋偏绿色""}]","这个色差也太大了吧
+你们图片是灰色的，这咋偏绿色",question_like_without_actual_issue

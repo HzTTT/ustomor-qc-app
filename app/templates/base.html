@@ -55,7 +55,8 @@
       </div>
     </div>
 
-    <main class="max-w-6xl mx-auto px-4 py-6">
+    {% set _wide_layout = (wide_layout if wide_layout is defined else False) %}
+    <main class="{{ 'max-w-[1400px]' if _wide_layout else 'max-w-6xl' }} mx-auto px-4 py-6">
       {% block content %}{% endblock %}
     </main>
   </div>
