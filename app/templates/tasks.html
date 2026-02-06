@@ -8,37 +8,39 @@
 </div>
 
 <div class="bg-white border rounded-2xl overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50">
-      <tr>
-        <th class="text-left px-4 py-3">任务</th>
-        <th class="text-left px-4 py-3">对话</th>
-        <th class="text-left px-4 py-3">指派给</th>
-        <th class="text-left px-4 py-3">状态</th>
-        <th class="text-left px-4 py-3">创建时间</th>
-        <th class="text-right px-4 py-3">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in tasks %}
-        {% set c = convos.get(t.conversation_id) %}
-        {% set assignee = users.get(t.assigned_to_user_id) %}
-        <tr class="border-t">
-          <td class="px-4 py-3">#{{ t.id }}</td>
-          <td class="px-4 py-3">
-            {% if c %}
-              <a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a>
-            {% else %}
-              {{ t.conversation_id }}
-            {% endif %}
-          </td>
-          <td class="px-4 py-3">{{ assignee.name if assignee else '-' }}</td>
-          <td class="px-4 py-3">{{ t.status }}</td>
-          <td class="px-4 py-3">{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-          <td class="px-4 py-3 text-right"><a class="underline" href="/tasks/{{ t.id }}">打开</a></td>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[760px]">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="text-left px-4 py-3">任务</th>
+          <th class="text-left px-4 py-3">对话</th>
+          <th class="text-left px-4 py-3">指派给</th>
+          <th class="text-left px-4 py-3">状态</th>
+          <th class="text-left px-4 py-3">创建时间</th>
+          <th class="text-right px-4 py-3">操作</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for t in tasks %}
+          {% set c = convos.get(t.conversation_id) %}
+          {% set assignee = users.get(t.assigned_to_user_id) %}
+          <tr class="border-t">
+            <td class="px-4 py-3">#{{ t.id }}</td>
+            <td class="px-4 py-3">
+              {% if c %}
+                <a class="underline" href="/conversations/{{ c.id }}">{{ c.external_id }}</a>
+              {% else %}
+                {{ t.conversation_id }}
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">{{ assignee.name if assignee else '-' }}</td>
+            <td class="px-4 py-3">{{ t.status }}</td>
+            <td class="px-4 py-3">{{ t.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td class="px-4 py-3 text-right"><a class="underline" href="/tasks/{{ t.id }}">打开</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

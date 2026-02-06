@@ -25,7 +25,10 @@
       <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
         <div class="px-4 py-3 border-b flex items-center justify-between">
           <div class="font-semibold">一级分类</div>
-          <div class="text-xs text-slate-500">共 {{ categories|length }} 个</div>
+          <div class="text-xs text-slate-500 text-right">
+            <div>共 {{ categories|length }} 个</div>
+            <div class="text-[11px] text-slate-400">手机端：按住 ≡ 拖拽</div>
+          </div>
         </div>
 
         <div class="p-4 border-b">
@@ -371,15 +374,19 @@
   </div>
 
 
-  <style>
-    .drag-handle {
-      cursor: grab;
-      user-select: none;
-    }
-    .draggable-item.dragging {
-      opacity: 0.6;
-    }
-  </style>
+	  <style>
+	    .drag-handle {
+	      cursor: grab;
+	      user-select: none;
+	      -webkit-user-select: none;
+	      touch-action: none;
+	      -webkit-user-drag: none;
+	      padding: 0.15rem 0.35rem;
+	    }
+	    .draggable-item.dragging {
+	      opacity: 0.6;
+	    }
+	  </style>
 
   <!-- Import modal -->
   <div id="importModal" class="fixed inset-0 z-[70] hidden" aria-hidden="true">
@@ -453,8 +460,18 @@
     })();
 
     (function(){
-      function initSortable(container, saveOrder) {
+	      function initSortable(container, saveOrder) {
+	        const FORCE_TOUCH_DND = (new URLSearchParams(window.location.search).get("touch") === "1");
+	        const IS_TOUCH_LIKE = FORCE_TOUCH_DND || (
+	          (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+	          (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)
+	        );
         let dragging = null;
+        let pointerId = null;
+        let startX = 0;
+        let startY = 0;
+        let started = false;
+        let suppressClickUntil = 0;
 
         function getDragAfterElement(y) {
           const items = Array.from(container.querySelectorAll('.draggable-item:not(.dragging)'));
@@ -469,7 +486,31 @@
           return closest.element;
         }
 
+        async function finishAndSave() {
+          if (!dragging) return;
+          dragging.classList.remove('dragging');
+          const orderedIds = Array.from(container.querySelectorAll('.draggable-item'))
+            .map((el) => el.getAttribute('data-id'))
+            .filter(Boolean);
+          dragging = null;
+          if (!orderedIds.length) return;
+          try {
+            await saveOrder(orderedIds);
+          } catch (err) {
+            console.error(err);
+          }
+        }
+
+        // Prevent accidental click after touch-drag
+        container.addEventListener('click', (e) => {
+          if (Date.now() < suppressClickUntil) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }, true);
+
         container.addEventListener('dragstart', (e) => {
+          if (IS_TOUCH_LIKE) return;
           const handle = e.target && e.target.closest ? e.target.closest('[data-drag-handle]') : null;
           if (!handle) {
             e.preventDefault();
@@ -489,6 +530,7 @@
         });
 
         container.addEventListener('dragover', (e) => {
+          if (IS_TOUCH_LIKE) return;
           if (!dragging) return;
           e.preventDefault();
           const after = getDragAfterElement(e.clientY);
@@ -500,23 +542,97 @@
         });
 
         container.addEventListener('drop', (e) => {
+          if (IS_TOUCH_LIKE) return;
           if (dragging) e.preventDefault();
         });
 
         container.addEventListener('dragend', async () => {
-          if (!dragging) return;
-          dragging.classList.remove('dragging');
-          const orderedIds = Array.from(container.querySelectorAll('.draggable-item'))
-            .map((el) => el.getAttribute('data-id'))
-            .filter(Boolean);
-          dragging = null;
-          if (!orderedIds.length) return;
-          try {
-            await saveOrder(orderedIds);
-          } catch (err) {
-            console.error(err);
-          }
+          if (IS_TOUCH_LIKE) return;
+          await finishAndSave();
         });
+
+        if (window.PointerEvent) {
+          // Use Pointer Events for touch/pen (mobile-friendly). Desktop keeps HTML5 drag.
+
+          function cleanupPointer() {
+            window.removeEventListener('pointermove', onPointerMove, { capture: true });
+            window.removeEventListener('pointerup', onPointerUp, { capture: true });
+            window.removeEventListener('pointercancel', onPointerCancel, { capture: true });
+            pointerId = null;
+            startX = 0;
+            startY = 0;
+            started = false;
+          }
+
+          function onPointerMove(ev) {
+            if (pointerId == null || ev.pointerId !== pointerId) return;
+            if (!dragging) return;
+            const moved = Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY);
+            if (!started) {
+              if (moved < 10) return;
+              started = true;
+            }
+            ev.preventDefault();
+
+            // Auto-scroll within container when near edges.
+            const rect = container.getBoundingClientRect();
+            const edge = 42;
+            if (ev.clientY < rect.top + edge) {
+              container.scrollTop -= Math.ceil((rect.top + edge - ev.clientY) / 6);
+            } else if (ev.clientY > rect.bottom - edge) {
+              container.scrollTop += Math.ceil((ev.clientY - (rect.bottom - edge)) / 6);
+            }
+
+            const after = getDragAfterElement(ev.clientY);
+            if (after == null) {
+              container.appendChild(dragging);
+            } else if (after !== dragging) {
+              container.insertBefore(dragging, after);
+            }
+          }
+
+          async function onPointerUp(ev) {
+            if (pointerId == null || ev.pointerId !== pointerId) return;
+            if (started) suppressClickUntil = Date.now() + 450;
+            cleanupPointer();
+            if (!dragging) return;
+            if (!started) {
+              dragging.classList.remove('dragging');
+              dragging = null;
+              return;
+            }
+            await finishAndSave();
+          }
+
+          function onPointerCancel(ev) {
+            if (pointerId == null || ev.pointerId !== pointerId) return;
+            cleanupPointer();
+            if (dragging) dragging.classList.remove('dragging');
+            dragging = null;
+          }
+
+          container.addEventListener('pointerdown', (ev) => {
+            if (ev.pointerType !== 'touch' && ev.pointerType !== 'pen') return;
+            const handle = ev.target && ev.target.closest ? ev.target.closest('[data-drag-handle]') : null;
+            if (!handle) return;
+            const item = handle.closest('.draggable-item');
+            if (!item) return;
+            // Ensure touch doesn't accidentally trigger native HTML5 drag.
+            try { handle.draggable = false; } catch (e) {}
+            handle.setAttribute('draggable', 'false');
+            ev.preventDefault();
+            dragging = item;
+            item.classList.add('dragging');
+            pointerId = ev.pointerId;
+            startX = ev.clientX;
+            startY = ev.clientY;
+            started = false;
+            try { handle.setPointerCapture(ev.pointerId); } catch (e) {}
+            window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+            window.addEventListener('pointerup', onPointerUp, { capture: true });
+            window.addEventListener('pointercancel', onPointerCancel, { capture: true });
+          });
+        }
       }
 
       const catList = document.getElementById('categoryList');

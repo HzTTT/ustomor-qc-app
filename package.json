@@ -1,0 +1,11 @@
+{
+  "name": "customor-qc-app-ui-tools",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.58.1"
+  },
+  "scripts": {
+    "ui:mobile-smoke": "node scripts/ui_smoke_mobile_drag.js"
+  }
+}
+

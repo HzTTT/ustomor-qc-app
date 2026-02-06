@@ -51,7 +51,7 @@
     <div class="text-xs text-slate-500 mb-2">点击右侧标签可高亮对应引用消息</div>
 
     
-    <div id="history-scroll" class="h-[200vh] overflow-y-auto pr-2 space-y-2">
+    <div id="history-scroll" class="h-[65vh] lg:h-[200vh] overflow-y-auto pr-2 space-y-2 overscroll-contain">
       {% for item in history_items %}
         {% if item.type == 'sep' %}
           <div class="py-2">

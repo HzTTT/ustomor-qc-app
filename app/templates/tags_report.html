@@ -61,7 +61,7 @@
       <div class="text-xs text-slate-500 mb-1">可选维度</div>
       <div id="available-fields" class="min-h-[52px] flex flex-wrap gap-2 p-2 border rounded-xl bg-slate-50" data-list="available"></div>
     </div>
-    <div class="mt-3 text-xs text-slate-500">提示：每一层都会自动带上「标签一级分类」和「标签」。</div>
+    <div class="mt-3 text-xs text-slate-500">提示：每一层都会自动带上「标签一级分类」和「标签」。手机端可长按维度标签拖拽排序/移动。</div>
   </div>
 
   <div class="min-w-0">
@@ -247,6 +247,23 @@
               min-width: 54px;
             }
           }
+
+          /* 移动端：字段拖拽（Pointer Events） */
+          #row-fields.is-drop-target,
+          #available-fields.is-drop-target {
+            outline: 2px dashed rgba(15, 23, 42, 0.35);
+            outline-offset: 2px;
+          }
+          .chip-drag-source {
+            opacity: 0.35;
+          }
+          .chip-drag-ghost {
+            position: fixed;
+            z-index: 9999;
+            pointer-events: none;
+            box-shadow: 0 14px 34px rgba(2, 6, 23, 0.24);
+            opacity: 0.95;
+          }
         </style>
         <table class="min-w-full text-sm" id="pivot-table">
           <thead>
@@ -325,10 +342,17 @@
 </div>
 
 <script>
-  const USER_ID = {{ user.id }};
-  const TAG_META = {{ tag_meta | tojson }};
-  const CATEGORY_META = {{ category_meta | tojson }};
-  const USER_META = {{ user_meta | tojson }};
+	  const USER_ID = {{ user.id }};
+	  const TAG_META = {{ tag_meta | tojson }};
+	  const CATEGORY_META = {{ category_meta | tojson }};
+	  const USER_META = {{ user_meta | tojson }};
+	  const FORCE_TOUCH_DND = (new URLSearchParams(window.location.search).get("touch") === "1");
+	  const IS_TOUCH_LIKE = FORCE_TOUCH_DND || (
+	    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+	    (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)
+	  );
+  const IS_TOUCH_UI = IS_TOUCH_LIKE;
+  const ENABLE_POINTER_DND = !!window.PointerEvent;
 
   const scenarioOrder = ["售前", "售后", "售前和售后", "其他接待场景", "无法判定", "未知"];
   const satisfactionOrder = ["大幅减少", "小幅减少", "无显著变化", "小幅增加", "大幅增加", "无法判定", "未知"];
@@ -1509,24 +1533,192 @@
     const active = state.row_fields.slice();
     const available = FIELD_DEFS.map(f => f.id).filter(id => !active.includes(id));
 
-    function createChip(fieldId, listType) {
-      const def = FIELD_DEFS.find(f => f.id === fieldId);
-      const chip = document.createElement("div");
-      chip.className = "flex items-center gap-1 px-2 py-1 rounded-lg border bg-white text-xs cursor-move";
-      chip.draggable = true;
-      chip.dataset.field = fieldId;
-      chip.dataset.list = listType;
-      chip.innerHTML = `<span class=\"text-slate-400\">⋮⋮</span><span>${def ? def.label : fieldId}</span>`;
-      chip.addEventListener("dragstart", e => {
-        e.dataTransfer.setData("text/plain", fieldId);
-        e.dataTransfer.setData("source", listType);
-      });
-      chip.addEventListener("dragover", e => e.preventDefault());
-      chip.addEventListener("drop", e => {
-        e.preventDefault();
-        const field = e.dataTransfer.getData("text/plain");
-        moveField(field, listType, fieldId);
-      });
+    let dropTargetEl = null;
+    function setDropTarget(nextEl) {
+      if (dropTargetEl && dropTargetEl !== nextEl) dropTargetEl.classList.remove("is-drop-target");
+      dropTargetEl = nextEl || null;
+      if (dropTargetEl) dropTargetEl.classList.add("is-drop-target");
+    }
+
+	      function createChip(fieldId, listType) {
+	        const def = FIELD_DEFS.find(f => f.id === fieldId);
+	        const chip = document.createElement("div");
+	        chip.className = "flex items-center gap-1 px-2 py-1 rounded-lg border bg-white text-xs cursor-move";
+	        chip.draggable = !IS_TOUCH_UI;
+	        chip.dataset.field = fieldId;
+	        chip.dataset.list = listType;
+	        chip.innerHTML = `<span class="text-slate-400 px-1.5 py-0.5 -mx-1 rounded-md" data-chip-handle>⋮⋮</span><span>${def ? def.label : fieldId}</span>`;
+
+      if (!IS_TOUCH_UI) {
+        chip.addEventListener("dragstart", e => {
+          e.dataTransfer.setData("text/plain", fieldId);
+          e.dataTransfer.setData("source", listType);
+        });
+        chip.addEventListener("dragover", e => e.preventDefault());
+        chip.addEventListener("drop", e => {
+          e.preventDefault();
+          const field = e.dataTransfer.getData("text/plain");
+          moveField(field, listType, fieldId);
+        });
+	      }
+
+	      if (ENABLE_POINTER_DND) {
+	        // Touch-friendly: drag via handle (⋮⋮); tap to add/remove quickly.
+	        let pointerId = null;
+	        let startX = 0;
+	        let startY = 0;
+	        let lastX = 0;
+	        let lastY = 0;
+	        let started = false;
+	        let pressTimer = null;
+	        let handleOnly = false;
+	        let suppressClickUntil = 0;
+	        let ghost = null;
+	        let offsetX = 0;
+	        let offsetY = 0;
+
+	        function cancelPress() {
+	          if (pressTimer) {
+	            clearTimeout(pressTimer);
+	            pressTimer = null;
+	          }
+	        }
+
+	        function beginDrag(x, y) {
+	          if (started) return;
+	          started = true;
+	          suppressClickUntil = Date.now() + 450;
+	          chip.classList.add("chip-drag-source");
+	          const rect = chip.getBoundingClientRect();
+	          ghost = chip.cloneNode(true);
+	          ghost.classList.add("chip-drag-ghost");
+	          ghost.style.width = rect.width + "px";
+	          ghost.style.height = rect.height + "px";
+	          ghost.style.left = (x - offsetX) + "px";
+	          ghost.style.top = (y - offsetY) + "px";
+	          document.body.appendChild(ghost);
+	          updateGhost(x, y);
+	        }
+
+	        function cleanup() {
+	          cancelPress();
+	          if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+	          ghost = null;
+	          chip.classList.remove("chip-drag-source");
+	          setDropTarget(null);
+	          pointerId = null;
+	          handleOnly = false;
+	          started = false;
+	          startX = 0;
+	          startY = 0;
+	          lastX = 0;
+	          lastY = 0;
+	          offsetX = 0;
+	          offsetY = 0;
+	        }
+
+	        function updateGhost(x, y) {
+	          if (!ghost) return;
+	          ghost.style.left = (x - offsetX) + "px";
+	          ghost.style.top = (y - offsetY) + "px";
+	        }
+
+	        chip.addEventListener("contextmenu", (e) => {
+	          if (pointerId != null) e.preventDefault();
+	        });
+
+	        chip.addEventListener("pointerdown", (ev) => {
+	          if (!FORCE_TOUCH_DND && ev.pointerType !== "touch" && ev.pointerType !== "pen") return;
+	          const handle = ev.target && ev.target.closest ? ev.target.closest("[data-chip-handle]") : null;
+	          if (ev.button != null && ev.button !== 0) return;
+	          const rect = chip.getBoundingClientRect();
+	          pointerId = ev.pointerId;
+	          startX = ev.clientX;
+	          startY = ev.clientY;
+	          lastX = ev.clientX;
+	          lastY = ev.clientY;
+	          started = false;
+	          handleOnly = !!handle;
+	          offsetX = ev.clientX - rect.left;
+	          offsetY = ev.clientY - rect.top;
+	          try { chip.setPointerCapture(pointerId); } catch (e) {}
+
+	          cancelPress();
+	          if (!handleOnly) {
+	            // Allow long-press anywhere on the chip to start dragging (more discoverable on mobile).
+	            pressTimer = setTimeout(() => {
+	              if (pointerId == null) return;
+	              beginDrag(lastX, lastY);
+	              const el = document.elementFromPoint(lastX, lastY);
+	              const drop = el && el.closest ? el.closest("#row-fields, #available-fields") : null;
+	              setDropTarget(drop);
+	            }, 220);
+	          } else {
+	            // Handle drag: prevent scroll immediately.
+	            ev.preventDefault();
+	          }
+	        });
+
+	        chip.addEventListener("pointermove", (ev) => {
+	          if (pointerId == null || ev.pointerId !== pointerId) return;
+	          lastX = ev.clientX;
+	          lastY = ev.clientY;
+	          const moved = Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY);
+	          if (!started) {
+	            if (handleOnly) {
+	              if (moved < 10) return;
+	              beginDrag(ev.clientX, ev.clientY);
+	            } else {
+	              // If user starts scrolling, cancel long-press drag.
+	              if (moved > 12) cancelPress();
+	              return;
+	            }
+	          }
+	          if (!started) return;
+	          ev.preventDefault();
+	          updateGhost(ev.clientX, ev.clientY);
+	          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+	          const drop = el && el.closest ? el.closest("#row-fields, #available-fields") : null;
+	          setDropTarget(drop);
+	        }, { passive: false });
+
+	        chip.addEventListener("pointerup", (ev) => {
+	          if (pointerId == null || ev.pointerId !== pointerId) return;
+	          const wasStarted = started;
+	          const x = ev.clientX;
+	          const y = ev.clientY;
+	          cleanup();
+	          if (!wasStarted) return;
+	          const el = document.elementFromPoint(x, y);
+	          const drop = el && el.closest ? el.closest("#row-fields, #available-fields") : null;
+	          if (!drop) return;
+	          const targetList = drop.id === "row-fields" ? "active" : "available";
+	          const beforeField = targetList === "active"
+	            ? getInsertBeforeField(drop, x, y, fieldId)
+	            : null;
+	          moveField(fieldId, targetList, beforeField);
+	        });
+
+        chip.addEventListener("pointercancel", (ev) => {
+          if (pointerId == null || ev.pointerId !== pointerId) return;
+          cleanup();
+        });
+
+        if (IS_TOUCH_UI) {
+          chip.addEventListener("click", (e) => {
+            if (Date.now() < suppressClickUntil) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
+            if (listType === "available") {
+              moveField(fieldId, "active", null);
+            } else {
+              moveField(fieldId, "available", null);
+            }
+          });
+        }
+      }
       return chip;
     }
 
@@ -1534,8 +1726,9 @@
     available.forEach(id => availableWrap.appendChild(createChip(id, "available")));
   }
 
-  function getInsertBeforeField(container, x, y) {
-    const chips = Array.from(container.querySelectorAll("[data-field]"));
+  function getInsertBeforeField(container, x, y, excludeFieldId) {
+    const chips = Array.from(container.querySelectorAll("[data-field]"))
+      .filter(chip => String(chip.dataset.field) !== String(excludeFieldId || ""));
     if (!chips.length) return null;
     let closest = null;
     let closestDist = Infinity;
@@ -1585,19 +1778,21 @@
     renderPivot();
   }
 
-  document.getElementById("row-fields").addEventListener("dragover", e => e.preventDefault());
-  document.getElementById("row-fields").addEventListener("drop", e => {
-    e.preventDefault();
-    const field = e.dataTransfer.getData("text/plain");
-    const beforeField = getInsertBeforeField(document.getElementById("row-fields"), e.clientX, e.clientY);
-    moveField(field, "active", beforeField);
-  });
-  document.getElementById("available-fields").addEventListener("dragover", e => e.preventDefault());
-  document.getElementById("available-fields").addEventListener("drop", e => {
-    e.preventDefault();
-    const field = e.dataTransfer.getData("text/plain");
-    moveField(field, "available", null);
-  });
+  if (!IS_TOUCH_UI) {
+    document.getElementById("row-fields").addEventListener("dragover", e => e.preventDefault());
+    document.getElementById("row-fields").addEventListener("drop", e => {
+      e.preventDefault();
+      const field = e.dataTransfer.getData("text/plain");
+      const beforeField = getInsertBeforeField(document.getElementById("row-fields"), e.clientX, e.clientY, field);
+      moveField(field, "active", beforeField);
+    });
+    document.getElementById("available-fields").addEventListener("dragover", e => e.preventDefault());
+    document.getElementById("available-fields").addEventListener("drop", e => {
+      e.preventDefault();
+      const field = e.dataTransfer.getData("text/plain");
+      moveField(field, "available", null);
+    });
+  }
 
   document.getElementById("time-mode").addEventListener("change", () => {
     ensureDefaultTimeForMode(document.getElementById("time-mode").value, true);

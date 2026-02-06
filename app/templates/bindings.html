@@ -30,70 +30,72 @@
       <div class="text-sm text-slate-600">共 {{ unbound_accounts|length }} 个</div>
     </div>
   </div>
-  <table class="w-full text-sm">
-    <thead class="bg-white">
-      <tr>
-        <th class="text-left px-4 py-3">平台</th>
-        <th class="text-left px-4 py-3">客服账号</th>
-        <th class="text-left px-4 py-3">涉及对话</th>
-        <th class="text-left px-4 py-3">最近出现</th>
-        <th class="text-left px-4 py-3">快捷操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in unbound_accounts %}
-        <tr class="border-t align-top">
-          <td class="px-4 py-3">{{ r.platform }}</td>
-          <td class="px-4 py-3">{{ r.agent_account }}</td>
-          <td class="px-4 py-3 text-slate-700">{{ r.convo_cnt }}</td>
-          <td class="px-4 py-3 text-slate-600">{% if r.last_seen %}{{ r.last_seen.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
-          <td class="px-4 py-3">
-            <div class="flex flex-col gap-2">
-              <form method="post" action="/bindings/create" class="flex flex-col md:flex-row gap-2">
-                <input type="hidden" name="platform" value="{{ r.platform }}" />
-                <input type="hidden" name="agent_account" value="{{ r.agent_account }}" />
-                <select name="user_id" class="px-3 py-2 rounded-xl border" required>
-                  <option value="">选择站内客服账号</option>
-                  {% for a in agents %}
-                    <option value="{{ a.id }}">{{ a.username }} · {{ a.name }}</option>
-                  {% endfor %}
-                </select>
-                <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">一键绑定</button>
-              </form>
-
-              <details class="rounded-xl border bg-white p-3">
-                <summary class="cursor-pointer text-sm text-slate-700">创建子账号并绑定</summary>
-                <div class="mt-3">
-                  <form method="post" action="/bindings/quick_create_and_bind" class="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
-                    <input type="hidden" name="platform" value="{{ r.platform }}" />
-                    <input type="hidden" name="agent_account" value="{{ r.agent_account }}" />
-                    <div>
-                      <label class="block text-xs text-slate-500 mb-1">登录用户名</label>
-                      <input name="username" value="{{ r.agent_nick or '' }}" placeholder="例如：taobao_001" class="w-full px-3 py-2 rounded-xl border" required />
-                    </div>
-                    <div>
-                      <label class="block text-xs text-slate-500 mb-1">显示名</label>
-                      <input name="name" placeholder="例如：小雨" class="w-full px-3 py-2 rounded-xl border" required />
-                    </div>
-                    <div>
-                      <label class="block text-xs text-slate-500 mb-1">初始密码</label>
-                      <input name="password" type="password" placeholder="至少6位" class="w-full px-3 py-2 rounded-xl border" required />
-                    </div>
-                    <div>
-                      <label class="block text-xs text-slate-500 mb-1">邮箱（可留空）</label>
-                      <input name="email" placeholder="留空会自动生成" class="w-full px-3 py-2 rounded-xl border" />
-                    </div>
-                    <button class="px-3 py-2 rounded-xl border bg-white text-sm">创建并绑定</button>
-                  </form>
-                  <div class="text-xs text-slate-500 mt-2">提示：创建后可在“账号管理”里重置密码/停用账号。</div>
-                </div>
-              </details>
-            </div>
-          </td>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[980px]">
+      <thead class="bg-white">
+        <tr>
+          <th class="text-left px-4 py-3">平台</th>
+          <th class="text-left px-4 py-3">客服账号</th>
+          <th class="text-left px-4 py-3">涉及对话</th>
+          <th class="text-left px-4 py-3">最近出现</th>
+          <th class="text-left px-4 py-3">快捷操作</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for r in unbound_accounts %}
+          <tr class="border-t align-top">
+            <td class="px-4 py-3">{{ r.platform }}</td>
+            <td class="px-4 py-3">{{ r.agent_account }}</td>
+            <td class="px-4 py-3 text-slate-700">{{ r.convo_cnt }}</td>
+            <td class="px-4 py-3 text-slate-600">{% if r.last_seen %}{{ r.last_seen.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
+            <td class="px-4 py-3">
+              <div class="flex flex-col gap-2">
+                <form method="post" action="/bindings/create" class="flex flex-col md:flex-row gap-2">
+                  <input type="hidden" name="platform" value="{{ r.platform }}" />
+                  <input type="hidden" name="agent_account" value="{{ r.agent_account }}" />
+                  <select name="user_id" class="px-3 py-2 rounded-xl border" required>
+                    <option value="">选择站内客服账号</option>
+                    {% for a in agents %}
+                      <option value="{{ a.id }}">{{ a.username }} · {{ a.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="px-3 py-2 rounded-xl bg-slate-900 text-white text-sm">一键绑定</button>
+                </form>
+
+                <details class="rounded-xl border bg-white p-3">
+                  <summary class="cursor-pointer text-sm text-slate-700">创建子账号并绑定</summary>
+                  <div class="mt-3">
+                    <form method="post" action="/bindings/quick_create_and_bind" class="grid grid-cols-1 md:grid-cols-5 gap-2 items-end">
+                      <input type="hidden" name="platform" value="{{ r.platform }}" />
+                      <input type="hidden" name="agent_account" value="{{ r.agent_account }}" />
+                      <div>
+                        <label class="block text-xs text-slate-500 mb-1">登录用户名</label>
+                        <input name="username" value="{{ r.agent_nick or '' }}" placeholder="例如：taobao_001" class="w-full px-3 py-2 rounded-xl border" required />
+                      </div>
+                      <div>
+                        <label class="block text-xs text-slate-500 mb-1">显示名</label>
+                        <input name="name" placeholder="例如：小雨" class="w-full px-3 py-2 rounded-xl border" required />
+                      </div>
+                      <div>
+                        <label class="block text-xs text-slate-500 mb-1">初始密码</label>
+                        <input name="password" type="password" placeholder="至少6位" class="w-full px-3 py-2 rounded-xl border" required />
+                      </div>
+                      <div>
+                        <label class="block text-xs text-slate-500 mb-1">邮箱（可留空）</label>
+                        <input name="email" placeholder="留空会自动生成" class="w-full px-3 py-2 rounded-xl border" />
+                      </div>
+                      <button class="px-3 py-2 rounded-xl border bg-white text-sm">创建并绑定</button>
+                    </form>
+                    <div class="text-xs text-slate-500 mt-2">提示：创建后可在“账号管理”里重置密码/停用账号。</div>
+                  </div>
+                </details>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endif %}
 
@@ -118,32 +120,34 @@
 </div>
 
 <div class="bg-white border rounded-2xl overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50">
-      <tr>
-        <th class="text-left px-4 py-3">创建时间</th>
-        <th class="text-left px-4 py-3">平台</th>
-        <th class="text-left px-4 py-3">客服账号</th>
-        <th class="text-left px-4 py-3">绑定到</th>
-        <th class="text-right px-4 py-3">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in bindings %}
-        {% set u = users_by_id.get(b.user_id) %}
-        <tr class="border-t">
-          <td class="px-4 py-3 text-slate-600">{{ b.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-          <td class="px-4 py-3">{{ b.platform }}</td>
-          <td class="px-4 py-3">{{ b.agent_account }}</td>
-          <td class="px-4 py-3">{{ u.name if u else "-" }}</td>
-          <td class="px-4 py-3 text-right">
-            <form method="post" action="/bindings/{{ b.id }}/delete" onsubmit="return confirm('确定删除该绑定吗？');" style="display:inline">
-              <button class="underline text-red-700">删除</button>
-            </form>
-          </td>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[760px]">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="text-left px-4 py-3">创建时间</th>
+          <th class="text-left px-4 py-3">平台</th>
+          <th class="text-left px-4 py-3">客服账号</th>
+          <th class="text-left px-4 py-3">绑定到</th>
+          <th class="text-right px-4 py-3">操作</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for b in bindings %}
+          {% set u = users_by_id.get(b.user_id) %}
+          <tr class="border-t">
+            <td class="px-4 py-3 text-slate-600">{{ b.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td class="px-4 py-3">{{ b.platform }}</td>
+            <td class="px-4 py-3">{{ b.agent_account }}</td>
+            <td class="px-4 py-3">{{ u.name if u else "-" }}</td>
+            <td class="px-4 py-3 text-right">
+              <form method="post" action="/bindings/{{ b.id }}/delete" onsubmit="return confirm('确定删除该绑定吗？');" style="display:inline">
+                <button class="underline text-red-700">删除</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}

@@ -15,28 +15,30 @@
 </div>
 
 <div class="bg-white border rounded-2xl overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50">
-      <tr>
-        <th class="text-left px-4 py-3">对话ID</th>
-        <th class="text-left px-4 py-3">平台</th>
-        <th class="text-left px-4 py-3">对话类型</th>
-        <th class="text-left px-4 py-3">摘要</th>
-        <th class="text-right px-4 py-3">操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for c in convos %}
-        {% set a = latest_by_conv.get(c.id) %}
-        <tr class="border-t {% if a and a.flag_for_review %}bg-red-50{% endif %}">
-          <td class="px-4 py-3">{{ c.external_id }}</td>
-          <td class="px-4 py-3">{{ c.platform }}</td>
-          <td class="px-4 py-3">{{ a.dialog_type if a else "-" }}</td>
-          <td class="px-4 py-3 text-slate-600">{{ (a.day_summary if a else "")[:60] }}{% if a and (a.day_summary or "")|length > 60 %}...{% endif %}</td>
-          <td class="px-4 py-3 text-right"><a class="underline" href="/conversations/{{ c.id }}">查看对话</a></td>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[760px]">
+      <thead class="bg-slate-50">
+        <tr>
+          <th class="text-left px-4 py-3">对话ID</th>
+          <th class="text-left px-4 py-3">平台</th>
+          <th class="text-left px-4 py-3">对话类型</th>
+          <th class="text-left px-4 py-3">摘要</th>
+          <th class="text-right px-4 py-3">操作</th>
         </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for c in convos %}
+          {% set a = latest_by_conv.get(c.id) %}
+          <tr class="border-t {% if a and a.flag_for_review %}bg-red-50{% endif %}">
+            <td class="px-4 py-3">{{ c.external_id }}</td>
+            <td class="px-4 py-3">{{ c.platform }}</td>
+            <td class="px-4 py-3">{{ a.dialog_type if a else "-" }}</td>
+            <td class="px-4 py-3 text-slate-600">{{ (a.day_summary if a else "")[:60] }}{% if a and (a.day_summary or "")|length > 60 %}...{% endif %}</td>
+            <td class="px-4 py-3 text-right"><a class="underline" href="/conversations/{{ c.id }}">查看对话</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% endblock %}
