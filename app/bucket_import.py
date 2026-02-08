@@ -19,6 +19,11 @@ from models import BucketObject, ImportRun
 if TYPE_CHECKING:
     from sqlmodel import Session
 
+try:  # pragma: no cover
+    from platform_detect import detect_platform_from_leyan_jsonl  # type: ignore
+except Exception:  # pragma: no cover
+    from app.platform_detect import detect_platform_from_leyan_jsonl  # type: ignore
+
 
 @dataclass
 class BucketItem:
@@ -34,8 +39,7 @@ class BucketConfig:
 
     Works for:
     - Aliyun OSS (S3-compatible endpoint)
-    - Volcano TOS (S3-compatible endpoint)
-    - AWS S3
+    - AWS S3 (and other S3-compatible providers)
     """
     bucket: str
     prefix: str = ""
@@ -140,6 +144,16 @@ def _safe_join_backup(backup_root: Path, key: str) -> Path:
     return backup_root / key
 
 
+def _safe_dir_name(v: str, default: str) -> str:
+    """Sanitize user-provided strings for filesystem directory names."""
+    s = (v or "").strip().strip("/")
+    if not s:
+        return default
+    s = s.replace("..", "_")
+    s = s.replace("/", "_").replace("\\", "_")
+    return s or default
+
+
 def _decode_object_bytes(key: str, body: bytes) -> str:
     low = (key or "").lower()
     if low.endswith(".gz"):
@@ -160,7 +174,6 @@ def _choose_importer(key: str) -> str:
     if "/leyan/" in low or low.startswith("leyan/"):
         return "leyan"
     return "ai"
-
 
 def sync_bucket_once(
     session: Session,
@@ -211,6 +224,13 @@ def sync_bucket_once(
     unbound_agent_accounts: set[str] = set()
     unbound_agent_nicks: Dict[str, str] = {}  # account -> nick mapping
 
+    # mixed-platform support (same bucket/prefix may contain multiple platforms)
+    agent_accounts_seen_by_platform: Dict[str, set[str]] = {}
+    unbound_agent_accounts_by_platform: Dict[str, set[str]] = {}
+    unbound_agent_nicks_by_platform: Dict[str, Dict[str, str]] = {}
+    imported_files_by_platform: Dict[str, int] = {}
+    platform_overrides: List[Dict[str, str]] = []
+
     for it in items:
         exists = session.exec(
             select(BucketObject).where(BucketObject.bucket == cfg.bucket, BucketObject.key == it.key, BucketObject.etag == it.etag)
@@ -235,8 +255,22 @@ def sync_bucket_once(
             resp = s3.get_object(Bucket=cfg.bucket, Key=it.key)
             body = resp["Body"].read()
 
+            raw_text = _decode_object_bytes(it.key, body)
+            importer = _choose_importer(it.key)
+
+            object_platform = platform
+            if importer == "leyan":
+                detected = detect_platform_from_leyan_jsonl(raw_text, key=it.key)
+                if detected and detected != object_platform:
+                    object_platform = detected
+                    if len(platform_overrides) < 50:
+                        platform_overrides.append({"key": it.key, "from": platform, "to": object_platform})
+
             # backup (raw bytes)
-            backup_path = _safe_join_backup(backup_dir, it.key)
+            # Put each platform/bucket under its own folder to avoid collisions when
+            # different buckets share the same key layout (e.g. both use leyan/YYYY-MM-DD/*.jsonl.gz).
+            backup_base = backup_dir / _safe_dir_name(object_platform, "unknown") / _safe_dir_name(cfg.bucket, "bucket")
+            backup_path = _safe_join_backup(backup_base, it.key)
             backup_path.parent.mkdir(parents=True, exist_ok=True)
             backup_path.write_bytes(body)
 
@@ -246,27 +280,35 @@ def sync_bucket_once(
             session.add(row)
             session.commit()
 
-            raw_text = _decode_object_bytes(it.key, body)
-            importer = _choose_importer(it.key)
-
             if importer == "leyan":
                 result = import_leyan_jsonl(
                     session=session,
                     raw_text=raw_text,
                     source_filename=f"bucket:{cfg.bucket}/{it.key}",
-                    platform=platform,
+                    platform=object_platform,
                 )
                 try:
+                    agent_accounts_seen_by_platform.setdefault(object_platform, set())
+                    unbound_agent_accounts_by_platform.setdefault(object_platform, set())
+                    unbound_agent_nicks_by_platform.setdefault(object_platform, {})
+
                     for x in (result.get("agent_accounts") or []):
-                        agent_accounts_seen.add(str(x))
+                        sx = str(x)
+                        agent_accounts_seen.add(sx)
+                        agent_accounts_seen_by_platform[object_platform].add(sx)
                     for x in (result.get("unbound_agent_accounts") or []):
-                        unbound_agent_accounts.add(str(x))
+                        sx = str(x)
+                        unbound_agent_accounts.add(sx)
+                        unbound_agent_accounts_by_platform[object_platform].add(sx)
                     # 收集未绑定账号的昵称信息
                     nicks = result.get("unbound_agent_nicks") or {}
                     if isinstance(nicks, dict):
                         for acc, nick in nicks.items():
                             if str(acc).strip() and str(nick).strip():
-                                unbound_agent_nicks[str(acc).strip()] = str(nick).strip()
+                                acc_s = str(acc).strip()
+                                nick_s = str(nick).strip()
+                                unbound_agent_nicks[acc_s] = nick_s
+                                unbound_agent_nicks_by_platform[object_platform][acc_s] = nick_s
                 except Exception:
                     pass
             else:
@@ -294,31 +336,47 @@ def sync_bucket_once(
                     if pfx and len(pfx[-1]) == 10 and pfx[-1][4] == "-" and pfx[-1][7] == "-":
                         dates = [pfx[-1]]
                 for ds in dates:
+                    plat = str(result.get("platform") or object_platform or platform or "unknown").strip().lower() or "unknown"
                     ir = session.exec(
                         select(ImportRun).where(
-                            ImportRun.platform == platform,
+                            ImportRun.platform == plat,
                             ImportRun.run_date == ds,
                             ImportRun.source == "bucket",
                         )
                     ).first()
                     details = counts_by_date.get(ds) or {}
+                    conv_inc = int(details.get("conversations", 0)) if details else 0
+                    msg_inc = int(details.get("messages", 0)) if details else 0
+                    ok = bool(result.get("ok"))
+                    files_inc = int(result.get("imported_files") or 0) if isinstance(result, dict) else 0
+                    if files_inc <= 0:
+                        files_inc = 1 if ok else 0
                     payload = {
                         "bucket": cfg.bucket,
                         "prefix": cfg.prefix or "",
-                        "files_imported": int(result.get("imported_files", 0)) if isinstance(result, dict) else 0,
-                        "conversations": int(details.get("conversations", 0)) if details else 0,
-                        "messages": int(details.get("messages", 0)) if details else 0,
+                        "files_imported": files_inc,
+                        "conversations": conv_inc,
+                        "messages": msg_inc,
                     }
                     if ir:
-                        ir.status = "done" if result.get("ok") else "error"
-                        ir.details = {**(ir.details or {}), **payload}
+                        # accumulate counts across multiple files for same (platform, date)
+                        prev = ir.details or {}
+                        payload["files_imported"] = int(prev.get("files_imported") or 0) + files_inc
+                        payload["conversations"] = int(prev.get("conversations") or 0) + conv_inc
+                        payload["messages"] = int(prev.get("messages") or 0) + msg_inc
+
+                        if ir.status != "error":
+                            ir.status = "done" if ok else "error"
+                        elif not ok:
+                            ir.status = "error"
+                        ir.details = {**prev, **payload}
                         session.add(ir)
                     else:
                         ir = ImportRun(
-                            platform=platform,
+                            platform=plat,
                             run_date=ds,
                             source="bucket",
-                            status="done" if result.get("ok") else "error",
+                            status="done" if ok else "error",
                             details=payload,
                         )
                         session.add(ir)
@@ -330,6 +388,7 @@ def sync_bucket_once(
             processed += 1
             if result.get("ok"):
                 imported += 1
+                imported_files_by_platform[object_platform] = int(imported_files_by_platform.get(object_platform) or 0) + 1
             else:
                 errors += 1
 
@@ -362,4 +421,10 @@ def sync_bucket_once(
         "agent_accounts": sorted([x for x in agent_accounts_seen if x]),
         "unbound_agent_accounts": sorted([x for x in unbound_agent_accounts if x]),
         "unbound_agent_nicks": unbound_agent_nicks,  # 新增：未绑定账号的昵称映射
+        # New: mixed-platform support
+        "agent_accounts_by_platform": {k: sorted([x for x in v if x]) for k, v in agent_accounts_seen_by_platform.items()},
+        "unbound_agent_accounts_by_platform": {k: sorted([x for x in v if x]) for k, v in unbound_agent_accounts_by_platform.items()},
+        "unbound_agent_nicks_by_platform": unbound_agent_nicks_by_platform,
+        "imported_files_by_platform": imported_files_by_platform,
+        "platform_overrides": platform_overrides,
     }

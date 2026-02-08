@@ -93,6 +93,8 @@ def _run_auto_qc_check(session: Session, state_dict: dict, log_keep: int = 800) 
                 keep=log_keep
             )
             state_dict["last_qc_check_at"] = _now().isoformat()
+            state_dict["last_qc_check_eligible"] = 0
+            state_dict["last_qc_check_enqueued"] = 0
             return state_dict
         
         # 为符合条件的对话创建分析任务
@@ -148,6 +150,9 @@ def _run_auto_qc_check(session: Session, state_dict: dict, log_keep: int = 800) 
             keep=log_keep
         )
         state_dict["last_qc_check_at"] = _now().isoformat()
+        # keep previous eligible/enqueued if present, but ensure keys exist for UI/diagnostics
+        state_dict.setdefault("last_qc_check_eligible", 0)
+        state_dict.setdefault("last_qc_check_enqueued", 0)
     
     return state_dict
 
@@ -184,15 +189,20 @@ def _append_log_state(s: dict, level: str, msg: str, keep: int = 800) -> dict:
 
 def _attempt_fetch_one(session: Session, *, source: str, cfg: BucketConfig, platform: str, date_str: str) -> dict:
     date_pref = _date_prefix(cfg.prefix, date_str)
-    # If already imported, we treat as success and avoid re-scan
-    if _is_date_imported(session, cfg.bucket, date_pref):
-        return {"ok": True, "already": True, "date": date_str, "prefix": date_pref}
-
     res = sync_bucket_once(session, cfg=cfg, prefix=date_pref, platform=platform, imported_by_user_id=None, create_jobs_if_missing=False)
     res["date"] = date_str
     res["date_prefix"] = date_pref
     res["source"] = source
     res["platform"] = platform
+    # Treat "nothing new (all skipped)" as already-success.
+    try:
+        processed = int(res.get("processed") or 0)
+        skipped = int(res.get("skipped") or 0)
+        errors = int(res.get("errors") or 0)
+        if processed <= 0 and skipped > 0 and errors <= 0:
+            res["already"] = True
+    except Exception:
+        pass
     return res
 
 
@@ -222,6 +232,13 @@ def main() -> None:
 
                 now = _now()
                 yesterday = (now - timedelta(days=1)).date().isoformat()
+
+                # 每小时检查一次：符合条件的对话自动触发AI质检
+                # 条件：>5消息 且 所有客服已绑定
+                # 重要：这个检查应独立于“每日轮巡抓取”运行；否则在 pending_date 为空时会被早退 continue 跳过。
+                if _should_run_hourly_qc_check(s):
+                    s = _run_auto_qc_check(session, s, log_keep=log_keep)
+                    _set_state(session, st, s)
 
                 pending_date = s.get("pending_date") or ""
                 next_attempt_at = s.get("next_attempt_at")  # iso str
@@ -300,31 +317,65 @@ def main() -> None:
 
                         # Notify when new (previously unseen) unbound external agent accounts appear.
                         try:
-                            unbound = [str(x) for x in (res.get("unbound_agent_accounts") or []) if str(x).strip()]
-                            unbound_nicks = res.get("unbound_agent_nicks") or {}
-                            if unbound:
-                                known_map = dict(s.get("known_unbound_agent_accounts") or {})
-                                known_list = list(known_map.get(platform) or [])
-                                known_set = set([str(x) for x in known_list if str(x).strip()])
-                                new_set = set(unbound) - known_set
-                                if new_set:
-                                    # record first, so even if webhook fails we won't spam every retry
-                                    known_set = known_set.union(new_set)
-                                    known_map[platform] = sorted(list(known_set))
-                                    s["known_unbound_agent_accounts"] = known_map
-                                    # 构建带昵称的通知消息
-                                    msg_lines = []
-                                    for acc in sorted(list(new_set)):
-                                        nick = unbound_nicks.get(acc, "")
-                                        if nick:
-                                            msg_lines.append(f"• {acc} (昵称: {nick})")
-                                        else:
-                                            msg_lines.append(f"• {acc}")
-                                    _notify(
-                                        session,
-                                        "⚠️ 发现未绑定客服账号",
-                                        f"平台：{platform}\n日期：{pending_date}\n\n未绑定账号（新增）：\n" + "\n".join(msg_lines) + "\n\n请到【设置 > 客服账号绑定】页面进行配置。",
-                                    )
+                            byp = res.get("unbound_agent_accounts_by_platform")
+                            nicks_byp = res.get("unbound_agent_nicks_by_platform") or {}
+                            if isinstance(byp, dict) and byp:
+                                for plat, accs in byp.items():
+                                    unbound = [str(x) for x in (accs or []) if str(x).strip()]
+                                    if not unbound:
+                                        continue
+                                    plat_nicks = {}
+                                    if isinstance(nicks_byp, dict):
+                                        plat_nicks = (nicks_byp.get(plat) or {}) if isinstance(nicks_byp.get(plat), dict) else {}
+
+                                    known_map = dict(s.get("known_unbound_agent_accounts") or {})
+                                    known_list = list(known_map.get(plat) or [])
+                                    known_set = set([str(x) for x in known_list if str(x).strip()])
+                                    new_set = set(unbound) - known_set
+                                    if new_set:
+                                        # record first, so even if webhook fails we won't spam every retry
+                                        known_set = known_set.union(new_set)
+                                        known_map[plat] = sorted(list(known_set))
+                                        s["known_unbound_agent_accounts"] = known_map
+                                        # 构建带昵称的通知消息
+                                        msg_lines = []
+                                        for acc in sorted(list(new_set)):
+                                            nick = plat_nicks.get(acc, "")
+                                            if nick:
+                                                msg_lines.append(f"• {acc} (昵称: {nick})")
+                                            else:
+                                                msg_lines.append(f"• {acc}")
+                                        _notify(
+                                            session,
+                                            "⚠️ 发现未绑定客服账号",
+                                            f"平台：{plat}\n日期：{pending_date}\n\n未绑定账号（新增）：\n" + "\n".join(msg_lines) + "\n\n请到【设置 > 客服账号绑定】页面进行配置。",
+                                        )
+                            else:
+                                unbound = [str(x) for x in (res.get("unbound_agent_accounts") or []) if str(x).strip()]
+                                unbound_nicks = res.get("unbound_agent_nicks") or {}
+                                if unbound:
+                                    known_map = dict(s.get("known_unbound_agent_accounts") or {})
+                                    known_list = list(known_map.get(platform) or [])
+                                    known_set = set([str(x) for x in known_list if str(x).strip()])
+                                    new_set = set(unbound) - known_set
+                                    if new_set:
+                                        # record first, so even if webhook fails we won't spam every retry
+                                        known_set = known_set.union(new_set)
+                                        known_map[platform] = sorted(list(known_set))
+                                        s["known_unbound_agent_accounts"] = known_map
+                                        # 构建带昵称的通知消息
+                                        msg_lines = []
+                                        for acc in sorted(list(new_set)):
+                                            nick = unbound_nicks.get(acc, "")
+                                            if nick:
+                                                msg_lines.append(f"• {acc} (昵称: {nick})")
+                                            else:
+                                                msg_lines.append(f"• {acc}")
+                                        _notify(
+                                            session,
+                                            "⚠️ 发现未绑定客服账号",
+                                            f"平台：{platform}\n日期：{pending_date}\n\n未绑定账号（新增）：\n" + "\n".join(msg_lines) + "\n\n请到【设置 > 客服账号绑定】页面进行配置。",
+                                        )
                         except Exception:
                             pass
                         if res.get("already"):
@@ -345,7 +396,18 @@ def main() -> None:
                             all_ok = False
                             summaries.append(f"{src}: 发现 {seen} 个文件，但导入失败 {errors} 次")
                         else:
-                            summaries.append(f"{src}: 发现 {seen} 个文件，导入成功 {imported}，失败 {errors}")
+                            byp = res.get("imported_files_by_platform") or {}
+                            extra = ""
+                            if isinstance(byp, dict) and byp:
+                                parts = []
+                                for k in sorted(byp.keys()):
+                                    try:
+                                        parts.append(f"{k}={int(byp.get(k) or 0)}")
+                                    except Exception:
+                                        parts.append(f"{k}=?")
+                                if parts:
+                                    extra = "（" + ", ".join(parts) + "）"
+                            summaries.append(f"{src}: 发现 {seen} 个文件，导入成功 {imported}，失败 {errors}" + extra)
 
                     except Exception as e:
                         all_ok = False
@@ -381,14 +443,6 @@ def main() -> None:
                 if bool(getattr(cfg_row, "enable_enqueue_analysis", True)):
                     if is_auto_analysis_enabled(session):
                         enqueue_missing_analyses(session)
-                
-                # 每小时检查一次：符合条件的对话自动触发AI质检
-                # 条件：>5消息 且 所有客服已绑定
-                st = _get_state(session, state_name)
-                s = dict(st.state or {})
-                if _should_run_hourly_qc_check(s):
-                    s = _run_auto_qc_check(session, s, log_keep=log_keep)
-                    _set_state(session, st, s)
 
         except Exception:
             # best-effort cron

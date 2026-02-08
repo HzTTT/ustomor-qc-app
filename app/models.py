@@ -576,3 +576,67 @@ class ManualTagBinding(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     reason: str = Field(default="")
     evidence: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+
+# =========================
+# Marllen Assistant (floating AI butler; all roles can ask questions)
+# =========================
+
+
+class AssistantThread(SQLModel, table=True):
+    """A personal chat thread for the in-app AI butler (Marllen小助手)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_user_id: int = Field(foreign_key="user.id", index=True)
+
+    title: str = Field(default="Marllen小助手")
+    is_archived: bool = Field(default=False, index=True)
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    meta: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    messages: list["AssistantMessage"] = Relationship(back_populates="thread")
+
+
+class AssistantMessage(SQLModel, table=True):
+    """Chat message for Marllen小助手.
+
+    role: user / assistant / system
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    thread_id: int = Field(foreign_key="assistantthread.id", index=True)
+
+    role: str = Field(default="user", index=True)
+    content: str = Field(default="", sa_column=Column(Text))
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    meta: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    thread: Optional[AssistantThread] = Relationship(back_populates="messages")
+
+
+class AssistantJob(SQLModel, table=True):
+    """Background job to generate an assistant reply.
+
+    We enqueue on user submit so refresh/navigation won't lose the request.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    thread_id: int = Field(foreign_key="assistantthread.id", index=True)
+    created_by_user_id: int = Field(foreign_key="user.id", index=True)
+
+    status: JobStatus = Field(default=JobStatus.pending, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: Optional[datetime] = Field(default=None, index=True)
+    finished_at: Optional[datetime] = Field(default=None, index=True)
+    attempts: int = Field(default=0)
+    last_error: str = Field(default="")
+
+    # Which user message triggered this job. Enforces "one question at a time".
+    user_message_id: int = Field(foreign_key="assistantmessage.id", index=True)
+    assistant_message_id: Optional[int] = Field(default=None, foreign_key="assistantmessage.id", index=True)
+
+    extra: dict = Field(default_factory=dict, sa_column=Column(JSON))

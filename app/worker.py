@@ -21,6 +21,12 @@ from daily_summary import (
     mark_daily_job_error,
     generate_daily_summary,
 )
+from marllen_assistant import (
+    claim_one_assistant_job,
+    generate_assistant_reply,
+    mark_assistant_job_done,
+    mark_assistant_job_error,
+)
 from models import DailyAISummaryReport
 
 
@@ -81,7 +87,41 @@ async def main() -> None:
                 poll_seconds = max(1, int(getattr(cfg, "worker_poll_seconds", 5) or 5))
             except Exception:
                 poll_seconds = 5
-            # 1) Conversation analysis jobs (existing)
+            # 1) Marllen assistant jobs (floating AI butler)
+            ajob = None
+            try:
+                ajob = claim_one_assistant_job(session)
+            except Exception:
+                ajob = None
+
+            if ajob:
+                try:
+                    mid = await generate_assistant_reply(session, job=ajob)
+                    mark_assistant_job_done(session, ajob, assistant_message_id=mid)
+                except Exception as e:
+                    mark_assistant_job_error(session, ajob, str(e))
+
+                await asyncio.sleep(0.2)
+                continue
+
+            # 2) Daily summary jobs
+            djob = None
+            try:
+                djob = claim_one_daily_job(session)
+            except Exception:
+                djob = None
+
+            if djob:
+                try:
+                    await _run_daily_job(session, djob)
+                    mark_daily_job_done(session, djob)
+                except Exception as e:
+                    mark_daily_job_error(session, djob, str(e))
+
+                await asyncio.sleep(0.2)
+                continue
+
+            # 3) Conversation analysis jobs (can be heavy; keep lowest priority)
             job = None
             try:
                 job = claim_one_job(session)
@@ -112,23 +152,6 @@ async def main() -> None:
                             print(f"[worker] failed to mark job error for job_id={getattr(job, 'id', None)}")
                         except Exception:
                             pass
-
-                await asyncio.sleep(0.2)
-                continue
-
-            # 2) Daily summary jobs
-            djob = None
-            try:
-                djob = claim_one_daily_job(session)
-            except Exception:
-                djob = None
-
-            if djob:
-                try:
-                    await _run_daily_job(session, djob)
-                    mark_daily_job_done(session, djob)
-                except Exception as e:
-                    mark_daily_job_error(session, djob, str(e))
 
                 await asyncio.sleep(0.2)
                 continue

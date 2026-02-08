@@ -171,6 +171,33 @@ def _bucket_config_from_cfg(cfg: AppConfig, source: str) -> dict[str, str]:
 def get_bucket_config_dict(source: str, session: Session | None) -> dict[str, str]:
     """Get bucket config as dict. AppConfig (taobao/douyin) overrides env."""
     p = (source or "DEFAULT").upper().strip()
+    def _apply_douyin_oss_fallback(out: dict[str, str]) -> dict[str, str]:
+        # Douyin has migrated to Aliyun OSS. To avoid misconfiguration:
+        # 1) If old Volcano TOS endpoint configured (volces.com), ignore it.
+        # 2) Allow leaving DOUYIN_* empty; reuse TAOBAO_* by default.
+        ep = (out.get("endpoint") or "").strip().lower()
+        if "volces.com" in ep:
+            out = {
+                "bucket": "",
+                "prefix": "",
+                "endpoint": "",
+                "region": "",
+                "access_key": "",
+                "secret_key": "",
+            }
+        tb_fallback = {
+            "bucket": _env("TAOBAO_BUCKET_NAME"),
+            "prefix": _env("TAOBAO_BUCKET_PREFIX"),
+            "endpoint": _env("TAOBAO_S3_ENDPOINT"),
+            "region": _env("TAOBAO_S3_REGION"),
+            "access_key": _env("TAOBAO_S3_ACCESS_KEY"),
+            "secret_key": _env("TAOBAO_S3_SECRET_KEY"),
+        }
+        for k, v in tb_fallback.items():
+            if not (out.get(k) or "").strip():
+                out[k] = v
+        return out
+
     if p == "DEFAULT":
         out = {
             "bucket": _env("BUCKET_NAME"),
@@ -189,6 +216,8 @@ def get_bucket_config_dict(source: str, session: Session | None) -> dict[str, st
             "access_key": _env(f"{p}_S3_ACCESS_KEY"),
             "secret_key": _env(f"{p}_S3_SECRET_KEY"),
         }
+        if p == "DOUYIN":
+            out = _apply_douyin_oss_fallback(out)
     if session is not None and p in ("TAOBAO", "DOUYIN"):
         try:
             cfg = get_app_config(session)
@@ -198,6 +227,9 @@ def get_bucket_config_dict(source: str, session: Session | None) -> dict[str, st
                     out[k] = v
         except Exception:
             pass
+        if p == "DOUYIN":
+            # Apply again after AppConfig overrides, so saved old TOS configs won't take effect.
+            out = _apply_douyin_oss_fallback(out)
     return out
 
 

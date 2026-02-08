@@ -5,7 +5,8 @@
     "playwright": "^1.58.1"
   },
   "scripts": {
-    "ui:mobile-smoke": "node scripts/ui_smoke_mobile_drag.js"
+    "ui:mobile-smoke": "node scripts/ui_smoke_mobile_drag.js",
+    "ui:assistant-mobile-smoke": "node scripts/ui_smoke_mobile_assistant_scroll_lock.js",
+    "ui:assistant-refresh-smoke": "node scripts/ui_smoke_assistant_refresh_wait.js"
   }
 }
-

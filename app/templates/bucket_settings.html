@@ -46,7 +46,7 @@
           </label>
           <label class="flex items-center gap-2 text-sm">
             <input type="checkbox" name="douyin_bucket_import_enabled" value="1" {% if s.douyin_bucket_import_enabled %}checked{% endif %} />
-            启用抖音（TOS）抓取
+            启用抖音（阿里 OSS）抓取
           </label>
         </div>
 
@@ -97,11 +97,14 @@
       </div>
 
       <div class="border-t pt-4 mt-4">
-        <div class="text-sm font-medium mb-2">抖音（火山引擎 TOS）S3 配置</div>
+        <div class="text-sm font-medium mb-1">抖音（阿里 OSS）S3 配置</div>
+        <div class="text-xs text-slate-500 mb-2">
+          抖音数据已迁移到阿里 OSS；若与淘宝共用同一桶/同目录上传，这里可以留空，系统会自动复用淘宝配置并按内容识别平台。
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
           <div>
             <label class="block text-xs text-slate-500 mb-1">Bucket 名称</label>
-            <input name="douyin_bucket" value="{{ s.douyin_bucket_config.bucket or '' }}" placeholder="conversations-marllen-douyin" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+            <input name="douyin_bucket" value="{{ s.douyin_bucket_config.bucket or '' }}" placeholder="conversations-marllen-taobao" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
           </div>
           <div>
             <label class="block text-xs text-slate-500 mb-1">前缀（Prefix）</label>
@@ -109,11 +112,11 @@
           </div>
           <div class="md:col-span-2">
             <label class="block text-xs text-slate-500 mb-1">S3 Endpoint</label>
-            <input name="douyin_endpoint" value="{{ s.douyin_bucket_config.endpoint or '' }}" placeholder="https://tos-cn-beijing.volces.com" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+            <input name="douyin_endpoint" value="{{ s.douyin_bucket_config.endpoint or '' }}" placeholder="https://oss-cn-shanghai.aliyuncs.com" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
           </div>
           <div>
             <label class="block text-xs text-slate-500 mb-1">Region（可选）</label>
-            <input name="douyin_region" value="{{ s.douyin_bucket_config.region or '' }}" placeholder="cn-beijing" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
+            <input name="douyin_region" value="{{ s.douyin_bucket_config.region or '' }}" placeholder="cn-shanghai" class="w-full px-3 py-2 rounded-xl border font-mono text-sm" />
           </div>
           <div>
             <label class="block text-xs text-slate-500 mb-1">Access Key</label>
@@ -149,18 +152,18 @@
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="sources" value="TAOBAO" checked />
+          <input type="checkbox" name="sources" value="TAOBAO" />
           淘宝（阿里 OSS）
         </label>
         <label class="flex items-center gap-2 text-sm">
           <input type="checkbox" name="sources" value="DOUYIN" />
-          抖音（TOS）
+          抖音（阿里 OSS）
         </label>
       </div>
 
       <div class="flex items-center gap-2">
         <button class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm">立即抓取并导入</button>
-        <div class="text-xs text-slate-500">会按 leyAn 目录结构：/leyan/YYYY-MM-DD/</div>
+        <div class="text-xs text-slate-500">至少选 1 个平台；会按 leyAn 目录结构：/leyan/YYYY-MM-DD/</div>
       </div>
     </form>
   </div>

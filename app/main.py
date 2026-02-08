@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, Backgroun
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import or_, and_, func, exists, delete
 
@@ -45,6 +46,9 @@ from models import (
     TagSuggestion,
     RejectedTagRule,
     ManualTagBinding,
+    AssistantThread,
+    AssistantMessage,
+    AssistantJob,
 )
 from auth import (
     hash_password,
@@ -69,6 +73,16 @@ from notify import get_feishu_webhook_url, send_feishu_webhook
 from daily_summary import DEFAULT_DAILY_SUMMARY_PROMPT, build_daily_input, generate_daily_summary, enqueue_daily_job, get_latest_daily_job
 from tools.user_admin import validate_role_change
 from tools.tag_management import update_tag_definition, normalize_standard_for_category
+from marllen_assistant import (
+    ASSISTANT_NAME as MARLLEN_ASSISTANT_NAME,
+    activate_thread as activate_marllen_thread,
+    archive_and_create_new_thread,
+    get_or_create_active_thread,
+    get_pending_job as get_marllen_pending_job,
+    list_threads as list_marllen_threads,
+    list_thread_messages as list_marllen_thread_messages,
+    maybe_auto_title_thread as maybe_auto_title_marllen_thread,
+)
 
 
 app = FastAPI(title="客服质检与培训(MVP)")
@@ -164,7 +178,13 @@ def me_redirect(user: User = Depends(get_current_user)):
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, error: str | None = None, next: str | None = None):
-    return _template(request, "login.html", error=error, next=_sanitize_next(next))
+    return _template(
+        request,
+        "login.html",
+        error=error,
+        next=_sanitize_next(next),
+        remember_days=int(getattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7) or 7),
+    )
 
 
 @app.post("/login")
@@ -173,6 +193,7 @@ def login_action(
     background_tasks: BackgroundTasks,
     username: str = Form(...),
     password: str = Form(...),
+    remember: str | None = Form(None),
     next: str | None = Form(None),
     session: Session = Depends(get_session),
 ):
@@ -183,17 +204,28 @@ def login_action(
             "login.html",
             error="用户名或密码不正确",
             next=_sanitize_next(next) or _sanitize_next(request.query_params.get("next")),
+            remember_days=int(getattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7) or 7),
         )
 
-    token = create_token(user)
+    remember_val = ((remember or "on") or "").strip().lower()
+    remember_on = remember_val in {"on", "1", "true", "yes"}
+    expire_hours = None
+    if remember_on:
+        expire_hours = int(getattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7) or 7) * 24
+        expire_hours = max(1, expire_hours)
+
+    token = create_token(user, expire_hours=expire_hours)
     target = _sanitize_next(next) or _sanitize_next(request.query_params.get("next")) or "/conversations"
     resp = _redirect(target)
-    resp.set_cookie(
-        auth_settings.COOKIE_NAME,
-        token,
+    cookie_kwargs = dict(
         httponly=True,
         samesite="lax",
+        secure=bool(getattr(auth_settings, "COOKIE_SECURE", False)),
     )
+    if remember_on and expire_hours:
+        max_age = int(expire_hours * 3600)
+        cookie_kwargs.update(max_age=max_age, expires=max_age)
+    resp.set_cookie(auth_settings.COOKIE_NAME, token, **cookie_kwargs)
 
 
     # Feishu login success notification (best-effort; never blocks login)
@@ -262,9 +294,20 @@ def register_action(
     session.add(u)
     session.commit()
 
-    token = create_token(u)
+    expire_hours = int(getattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7) or 7) * 24
+    expire_hours = max(1, expire_hours)
+    token = create_token(u, expire_hours=expire_hours)
     resp = _redirect("/conversations")
-    resp.set_cookie(auth_settings.COOKIE_NAME, token, httponly=True, samesite="lax")
+    max_age = int(expire_hours * 3600)
+    resp.set_cookie(
+        auth_settings.COOKIE_NAME,
+        token,
+        httponly=True,
+        samesite="lax",
+        secure=bool(getattr(auth_settings, "COOKIE_SECURE", False)),
+        max_age=max_age,
+        expires=max_age,
+    )
     return resp
 
 
@@ -906,13 +949,10 @@ def bucket_settings_page(
         board_dates.append(cur.isoformat())
         cur += timedelta(days=1)
 
-    platforms = []
-    if getattr(cfg, "taobao_bucket_import_enabled", True):
-        platforms.append("taobao")
-    if getattr(cfg, "douyin_bucket_import_enabled", False):
-        platforms.append("douyin")
-    if not platforms:
-        platforms = ["taobao", "douyin"]
+    # Always show both columns on the board.
+    # Reason: a single bucket/prefix may contain mixed platforms (auto-detected at import time),
+    # and we still want the admin board to reflect both, independent of which source toggles are ON.
+    platforms = ["taobao", "douyin"]
 
     # 1) 先读 ImportRun（如果有）
     from models import ImportRun
@@ -1135,7 +1175,16 @@ def bucket_settings_update(
             tz = timezone(timedelta(hours=8))
             d = (datetime.now(tz=tz) - timedelta(days=1)).date().isoformat()
 
-        srcs = sources or ["TAOBAO"]
+        srcs = [str(x).strip().upper() for x in (sources or []) if str(x).strip()]
+        # Require explicit selection to avoid accidental "douyin补抓" also importing taobao.
+        if not srcs:
+            result_text = f"手动抓取日期：{d}\n请选择要抓取的平台（淘宝/抖音）。"
+            _append_bucket_ui_log(session, "手动抓取取消：" + result_text, level="WARN")
+            from urllib.parse import quote
+            return _redirect("/settings/bucket?run_result=" + quote(result_text))
+
+        # Dedup (user may submit duplicated values).
+        srcs = sorted(set(srcs))
         summaries = []
         all_unbound_accounts = []  # 收集所有未绑定账号信息
         for src in srcs:
@@ -1152,19 +1201,46 @@ def bucket_settings_update(
             platform = "taobao" if src == "TAOBAO" else "douyin"
             try:
                 res = sync_bucket_once(session, cfg=cfg, prefix=date_prefix, platform=platform, imported_by_user_id=user.id, create_jobs_if_missing=False)
-                summaries.append(f"{src}: 发现 {res.get('seen',0)} 个文件，导入 {res.get('imported',0)}，失败 {res.get('errors',0)}")
+                seen = int(res.get("seen", 0) or 0)
+                imported = int(res.get("imported", 0) or 0)
+                errors = int(res.get("errors", 0) or 0)
+                extra = ""
+                byp = res.get("imported_files_by_platform") or {}
+                if isinstance(byp, dict) and byp:
+                    parts = []
+                    for k in sorted(byp.keys()):
+                        try:
+                            parts.append(f"{k}={int(byp.get(k) or 0)}")
+                        except Exception:
+                            parts.append(f"{k}=?")
+                    if parts:
+                        extra = "（" + ", ".join(parts) + "）"
+                summaries.append(f"{src}: 发现 {seen} 个文件，导入 {imported}，失败 {errors}" + extra)
                 
                 # 收集未绑定客服账号信息
-                unbound = res.get("unbound_agent_accounts") or []
-                unbound_nicks = res.get("unbound_agent_nicks") or {}
-                if unbound:
-                    for acc in unbound:
-                        nick = unbound_nicks.get(acc, "")
-                        all_unbound_accounts.append({
-                            "platform": platform,
-                            "account": acc,
-                            "nick": nick
-                        })
+                byp_unbound = res.get("unbound_agent_accounts_by_platform")
+                byp_nicks = res.get("unbound_agent_nicks_by_platform") or {}
+                if isinstance(byp_unbound, dict) and byp_unbound:
+                    for plat, accs in byp_unbound.items():
+                        plat_nicks = {}
+                        if isinstance(byp_nicks, dict):
+                            plat_nicks = (byp_nicks.get(plat) or {}) if isinstance(byp_nicks.get(plat), dict) else {}
+                        for acc in (accs or []):
+                            acc_s = str(acc).strip()
+                            if not acc_s:
+                                continue
+                            nick = str(plat_nicks.get(acc_s, "") or "").strip()
+                            all_unbound_accounts.append({"platform": plat or platform, "account": acc_s, "nick": nick})
+                else:
+                    unbound = res.get("unbound_agent_accounts") or []
+                    unbound_nicks = res.get("unbound_agent_nicks") or {}
+                    if unbound:
+                        for acc in unbound:
+                            acc_s = str(acc).strip()
+                            if not acc_s:
+                                continue
+                            nick = str(unbound_nicks.get(acc_s, "") or "").strip()
+                            all_unbound_accounts.append({"platform": platform, "account": acc_s, "nick": nick})
             except Exception as e:
                 summaries.append(f"{src}: 异常 {e}")
 
@@ -2725,6 +2801,7 @@ def conversations_list(
     session: Session = Depends(get_session),
     agent_id: list[str] | None = Query(None),
     ext_agent_account: list[str] | None = Query(None),
+    platform: str = "",
     match: str = "",
     time_mode: str | None = None,
     start: str = "",
@@ -2770,10 +2847,23 @@ def conversations_list(
 
     agent_ids = _parse_int_list(agent_id)
     ext_agent_account_norms = [str(v or "").strip() for v in (ext_agent_account or []) if str(v or "").strip()]
+    platform_norm = (platform or "").strip().lower()
 
     # 需求更新：所有已登录客服都可以查看全部对话。
     # 同时保留（可选的）按站内客服账号过滤功能：用于“聊天接待界面”按客服筛选。
     conv_where: list = []
+    if platform_norm:
+        if platform_norm == "unknown":
+            conv_where.append(
+                or_(
+                    Conversation.platform.is_(None),
+                    Conversation.platform == "",
+                    func.lower(Conversation.platform) == "unknown",
+                )
+            )
+        else:
+            # 使用 lower() 兼容历史数据大小写不一致
+            conv_where.append(func.lower(Conversation.platform) == platform_norm)
     if agent_ids:
         # include both explicit assignment and (platform,agent_account) bindings as fallback
         bs = session.exec(select(AgentBinding).where(AgentBinding.user_id.in_(agent_ids))).all()
@@ -3096,6 +3186,29 @@ def conversations_list(
 
     external_agent_accounts = sorted(ext_accounts)
 
+    # 平台下拉选项（对话列表筛选）
+    platform_labels = {
+        "taobao": "淘宝",
+        "douyin": "抖音",
+        "unknown": "未知",
+    }
+    platform_opt_set: set[str] = {"taobao", "douyin", "unknown"}
+    try:
+        rows_plat = session.exec(
+            select(Conversation.platform)
+            .where(Conversation.platform.is_not(None), Conversation.platform != "")
+            .distinct()
+        ).all()
+        for r in rows_plat or []:
+            v = r[0] if isinstance(r, tuple) else r
+            v = str(v or "").strip().lower()
+            if v:
+                platform_opt_set.add(v)
+    except Exception:
+        pass
+    preferred = ["taobao", "douyin", "unknown"]
+    platform_options = [p for p in preferred if p in platform_opt_set] + sorted([p for p in platform_opt_set if p not in preferred])
+
     # === 客服显示（支持同一对话多客服）===
     # 列表页展示“这个对话里出现过哪些客服”。优先站内绑定名，其次外部昵称/账号。
     # 多个客服用 " / " 连接；超过 3 个则显示前 3 个 + " …(+N)".
@@ -3324,6 +3437,9 @@ def conversations_list(
         total_pages=total_pages,
         page_size=page_size,
         has_analysis=has_analysis_norm,
+        platform=platform_norm,
+        platform_options=platform_options,
+        platform_labels=platform_labels,
         time_modes=[
             ("all", "汇总"),
             ("last_year", "年"),
@@ -3336,6 +3452,7 @@ def conversations_list(
         base_qs=_build_conversations_base_qs(
             agent_ids=agent_ids,
             ext_agent_accounts=ext_agent_account_norms,
+            platform=platform_norm,
             match=match_norm,
             time_mode=time_mode_norm,
             start=str(period.get("display_start") or ""),
@@ -3355,6 +3472,7 @@ def conversations_list(
 def _build_conversations_base_qs(
     agent_ids: list[int],
     ext_agent_accounts: list[str],
+    platform: str,
     match: str,
     time_mode: str,
     start: str,
@@ -3376,6 +3494,9 @@ def _build_conversations_base_qs(
         from urllib.parse import quote_plus
         for acc in ext_agent_accounts:
             parts.append(f"ext_agent_account={quote_plus(acc)}")
+    if platform and platform.strip():
+        from urllib.parse import quote_plus
+        parts.append(f"platform={quote_plus(platform.strip())}")
     if match:
         from urllib.parse import quote_plus
         parts.append(f"match={quote_plus(match)}")
@@ -4182,6 +4303,351 @@ def conversation_preview_api(
         "is_truncated": is_truncated,
         "messages": messages_out,
     }
+
+
+# ===== Marllen assistant (floating AI butler) =====
+
+
+def _fmt_dt_iso(dt: datetime | None) -> str | None:
+    if not dt:
+        return None
+    try:
+        # IMPORTANT: our DB timestamps are stored as naive UTC (datetime.utcnow()).
+        # If we return a timezone-less ISO string, browsers parse it as local time,
+        # which breaks elapsed-time UX (e.g. Shanghai shows +480 minutes).
+        from datetime import timezone
+
+        if getattr(dt, "tzinfo", None) is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        s = dt.isoformat()
+        if s.endswith("+00:00"):
+            s = s[:-6] + "Z"
+        return s
+    except Exception:
+        return str(dt)
+
+def _status_val(x) -> str:
+    return str(getattr(x, "value", None) or x or "")
+
+def _assistant_message_out(m: AssistantMessage) -> dict:
+    role = (getattr(m, "role", None) or "user").strip().lower()
+    out: dict = {
+        "id": int(m.id or 0),
+        "role": role,
+        "content": m.content,
+        "created_at": _fmt_dt_iso(m.created_at),
+    }
+
+    if role == "assistant":
+        try:
+            from rendering import render_markdown_safe
+            out["content_html"] = render_markdown_safe(m.content or "")
+        except Exception:
+            out["content_html"] = None
+
+        meta = m.meta or {}
+        safe_meta: dict = {}
+        for k in ("type", "source", "charts", "model", "reasoning_effort", "format"):
+            if k in meta:
+                safe_meta[k] = meta.get(k)
+        if safe_meta:
+            out["meta"] = safe_meta
+
+    return out
+
+
+class _AssistantSendIn(BaseModel):
+    text: str = ""
+
+
+@app.get("/api/marllen-assistant/threads")
+def marllen_assistant_threads_api(
+    limit: int = 50,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    threads = list_marllen_threads(session, owner_user_id=uid, limit=limit)
+    active_thread_id = None
+    if threads:
+        t0 = threads[0]
+        if t0 and getattr(t0, "id", None) and not getattr(t0, "is_archived", False):
+            active_thread_id = int(t0.id or 0)
+
+    return {
+        "assistant_name": MARLLEN_ASSISTANT_NAME,
+        "active_thread_id": active_thread_id,
+        "threads": [
+            {
+                "id": int(t.id or 0),
+                "title": t.title,
+                "is_archived": bool(getattr(t, "is_archived", False)),
+                "created_at": _fmt_dt_iso(getattr(t, "created_at", None)),
+                "updated_at": _fmt_dt_iso(getattr(t, "updated_at", None)),
+            }
+            for t in (threads or [])
+        ],
+    }
+
+
+@app.get("/api/marllen-assistant/threads/{thread_id}")
+def marllen_assistant_thread_detail_api(
+    thread_id: int,
+    limit: int = 80,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    t = session.get(AssistantThread, int(thread_id))
+    if not t or int(getattr(t, "owner_user_id", 0) or 0) != uid:
+        raise HTTPException(status_code=404, detail="线程不存在")
+
+    msgs = list_marllen_thread_messages(session, thread_id=int(thread_id), limit=limit)
+    job = get_marllen_pending_job(session, thread_id=int(thread_id))
+
+    return {
+        "assistant_name": MARLLEN_ASSISTANT_NAME,
+        "thread": {
+            "id": int(getattr(t, "id", 0) or 0),
+            "title": t.title,
+            "is_archived": bool(getattr(t, "is_archived", False)),
+            "created_at": _fmt_dt_iso(getattr(t, "created_at", None)),
+            "updated_at": _fmt_dt_iso(getattr(t, "updated_at", None)),
+        },
+        "messages": [_assistant_message_out(m) for m in (msgs or [])],
+        "pending_job": (
+            {
+                "id": int(job.id or 0),
+                "status": _status_val(job.status),
+                "created_at": _fmt_dt_iso(job.created_at),
+                "started_at": _fmt_dt_iso(job.started_at),
+                "finished_at": _fmt_dt_iso(job.finished_at),
+                "attempts": int(getattr(job, "attempts", 0) or 0),
+                "last_error": (job.last_error or "")[:2000],
+            }
+            if job
+            else None
+        ),
+    }
+
+
+@app.get("/api/marllen-assistant/thread")
+def marllen_assistant_thread_api(
+    limit: int = 80,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    thread = get_or_create_active_thread(session, owner_user_id=uid)
+    tid = int(thread.id or 0)
+
+    msgs = list_marllen_thread_messages(session, thread_id=tid, limit=limit)
+    job = get_marllen_pending_job(session, thread_id=tid)
+
+    return {
+        "assistant_name": MARLLEN_ASSISTANT_NAME,
+        "thread": {
+            "id": tid,
+            "title": thread.title,
+            "updated_at": _fmt_dt_iso(thread.updated_at),
+        },
+        "messages": [_assistant_message_out(m) for m in (msgs or [])],
+        "pending_job": (
+            {
+                "id": int(job.id or 0),
+                "status": _status_val(job.status),
+                "created_at": _fmt_dt_iso(job.created_at),
+                "started_at": _fmt_dt_iso(job.started_at),
+                "finished_at": _fmt_dt_iso(job.finished_at),
+                "attempts": int(getattr(job, "attempts", 0) or 0),
+                "last_error": (job.last_error or "")[:2000],
+            }
+            if job
+            else None
+        ),
+    }
+
+
+@app.post("/api/marllen-assistant/threads/new")
+def marllen_assistant_new_thread_api(
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    thread = archive_and_create_new_thread(session, owner_user_id=uid)
+    tid = int(thread.id or 0)
+    msgs = list_marllen_thread_messages(session, thread_id=tid, limit=80)
+
+    return {
+        "assistant_name": MARLLEN_ASSISTANT_NAME,
+        "thread": {
+            "id": tid,
+            "title": thread.title,
+            "updated_at": _fmt_dt_iso(thread.updated_at),
+        },
+        "messages": [_assistant_message_out(m) for m in (msgs or [])],
+        "pending_job": None,
+    }
+
+
+@app.post("/api/marllen-assistant/threads/{thread_id}/messages")
+def marllen_assistant_send_message_api(
+    request: Request,
+    thread_id: int,
+    payload: _AssistantSendIn,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    t = session.get(AssistantThread, int(thread_id))
+    if not t or int(getattr(t, "owner_user_id", 0) or 0) != uid:
+        raise HTTPException(status_code=404, detail="线程不存在")
+
+    # Enforce "one question at a time" to keep conversation order coherent.
+    inflight = session.exec(
+        select(AssistantJob)
+        .where(
+            AssistantJob.thread_id == int(thread_id),
+            AssistantJob.status.in_(["pending", "running"]),
+        )
+        .order_by(AssistantJob.created_at.desc(), AssistantJob.id.desc())
+        .limit(1)
+    ).first()
+    if inflight:
+        raise HTTPException(status_code=409, detail="上一条问题还在处理中，请等待回答后再提问")
+
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+    if len(text) > 8000:
+        raise HTTPException(status_code=400, detail="问题太长（最多 8000 字）")
+
+    referer = (request.headers.get("referer") or "").strip()
+    if len(referer) > 500:
+        referer = referer[:500]
+
+    msg = AssistantMessage(
+        thread_id=int(thread_id),
+        role="user",
+        content=text,
+        meta={"referer": referer},
+    )
+    session.add(msg)
+
+    # Keep one active thread: sending to an archived thread re-activates it.
+    try:
+        activate_marllen_thread(session, owner_user_id=uid, thread=t)
+        maybe_auto_title_marllen_thread(t, text)
+    except Exception:
+        # best-effort; do not block send
+        pass
+
+    session.commit()
+    session.refresh(msg)
+
+    job = AssistantJob(
+        thread_id=int(thread_id),
+        created_by_user_id=uid,
+        status="pending",  # type: ignore
+        user_message_id=int(msg.id or 0),
+        extra={"referer": referer},
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    return {
+        "thread_id": int(thread_id),
+        "user_message_id": int(msg.id or 0),
+        "job_id": int(job.id or 0),
+    }
+
+
+@app.get("/api/marllen-assistant/jobs/{job_id}")
+def marllen_assistant_job_api(
+    job_id: int,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    uid = int(user.id or 0)
+    job = session.get(AssistantJob, int(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    t = session.get(AssistantThread, int(job.thread_id))
+    if not t or int(getattr(t, "owner_user_id", 0) or 0) != uid:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    assistant_msg = None
+    if getattr(job, "assistant_message_id", None):
+        assistant_msg = session.get(AssistantMessage, int(job.assistant_message_id))
+
+    return {
+        "job": {
+            "id": int(job.id or 0),
+            "thread_id": int(job.thread_id or 0),
+            "status": _status_val(job.status),
+            "created_at": _fmt_dt_iso(job.created_at),
+            "started_at": _fmt_dt_iso(job.started_at),
+            "finished_at": _fmt_dt_iso(job.finished_at),
+            "attempts": int(getattr(job, "attempts", 0) or 0),
+            "last_error": (job.last_error or "")[:2000],
+        },
+        "assistant_message": (
+            _assistant_message_out(assistant_msg)
+            if assistant_msg
+            else None
+        ),
+    }
+
+
+@app.post("/api/marllen-assistant/jobs/{job_id}/cancel")
+def marllen_assistant_job_cancel_api(
+    job_id: int,
+    user: User = Depends(require_role("admin", "supervisor", "agent")),
+    session: Session = Depends(get_session),
+):
+    """Force-stop a stuck assistant job so the UI can recover.
+
+    We reuse the existing JobStatus ("error") to avoid schema changes.
+    """
+    uid = int(user.id or 0)
+    job = session.get(AssistantJob, int(job_id))
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    t = session.get(AssistantThread, int(job.thread_id))
+    if not t or int(getattr(t, "owner_user_id", 0) or 0) != uid:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    st = _status_val(job.status)
+    if st not in ("done", "error"):
+        job.status = "error"  # type: ignore
+        job.finished_at = datetime.utcnow()
+        job.last_error = "canceled by user"
+        try:
+            job.extra = {**(job.extra or {}), "canceled": 1, "canceled_at": datetime.utcnow().isoformat(), "canceled_by_user_id": uid}
+        except Exception:
+            pass
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+    return {
+        "job": {
+            "id": int(job.id or 0),
+            "thread_id": int(job.thread_id or 0),
+            "status": _status_val(job.status),
+            "created_at": _fmt_dt_iso(job.created_at),
+            "started_at": _fmt_dt_iso(job.started_at),
+            "finished_at": _fmt_dt_iso(job.finished_at),
+            "attempts": int(getattr(job, "attempts", 0) or 0),
+            "last_error": (job.last_error or "")[:2000],
+        }
+    }
+
 
 @app.get("/conversations/{conversation_id}/export", response_class=HTMLResponse)
 def conversation_export_page(

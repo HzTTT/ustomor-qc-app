@@ -9,7 +9,7 @@
 
 import pytest
 from sqlmodel import Session, select
-from app.models import (
+from models import (
     TagDefinition,
     TagCategory,
     ConversationTagHit,

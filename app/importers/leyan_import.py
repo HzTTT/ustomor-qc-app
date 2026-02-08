@@ -165,7 +165,7 @@ def _get_or_create_conversation(
     started_at: datetime | None,
     ended_at: datetime | None,
     meta: Dict[str, Any],
-) -> Conversation:
+) -> tuple[Conversation, bool]:
     c = session.exec(select(Conversation).where(Conversation.external_id == external_id)).first()
     if c:
         # update window if we got wider range
@@ -183,7 +183,7 @@ def _get_or_create_conversation(
         if changed:
             session.add(c)
             session.flush()
-        return c
+        return c, False
 
     c = Conversation(
         external_id=external_id,
@@ -196,7 +196,7 @@ def _get_or_create_conversation(
     )
     session.add(c)
     session.flush()
-    return c
+    return c, True
 
 
 def import_leyan_jsonl(
@@ -225,7 +225,11 @@ def import_leyan_jsonl(
     # 记录未绑定客服账号的昵称信息：{account: nick}
     unbound_agent_nicks: Dict[str, str] = {}
 
+    # counts_by_date is used by bucket importer to build the daily board.
+    # Important: it must represent *newly imported* rows (idempotent), not the
+    # raw file size; otherwise re-imports would inflate stats and create dupes.
     counts_by_date: Dict[str, Dict[str, int]] = {}
+    counts_total_by_date: Dict[str, Dict[str, int]] = {}
 
     # group messages by (seller_id, buyer_id, date)
     groups: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
@@ -246,8 +250,17 @@ def import_leyan_jsonl(
 
         k = (seller_id, buyer_id, date_str)
         groups.setdefault(k, []).append(obj)
-        c = counts_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
-        c["messages"] += 1
+        c_total = counts_total_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
+        c_total["messages"] += 1
+
+    dates = sorted({ds for (_sid, _bid, ds) in groups.keys()})
+    for ds in dates:
+        counts_by_date.setdefault(ds, {"conversations": 0, "messages": 0})
+        counts_total_by_date.setdefault(ds, {"conversations": 0, "messages": 0})
+
+    for (_seller_id, _buyer_id, ds) in groups.keys():
+        counts_total_by_date.setdefault(ds, {"conversations": 0, "messages": 0})
+        counts_total_by_date[ds]["conversations"] += 1
 
     for (seller_id, buyer_id, date_str), msgs in groups.items():
         # compute started/ended
@@ -298,9 +311,7 @@ def import_leyan_jsonl(
                     unbound_agent_nicks[agent_account] = assistant_nick
 
         external_id = f"{platform}:{seller_id}:{buyer_id}:{date_str}"
-        counts_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
-        counts_by_date[date_str]["conversations"] += 1
-        conv = _get_or_create_conversation(
+        conv, created = _get_or_create_conversation(
             session,
             external_id=external_id,
             platform=platform,
@@ -319,10 +330,30 @@ def import_leyan_jsonl(
                 "date": date_str,
             },
         )
-        imported_convs += 1
+        if created:
+            imported_convs += 1
+            counts_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
+            counts_by_date[date_str]["conversations"] += 1
 
         # deterministic ordering
         msgs.sort(key=lambda x: (_parse_dt(x.get("sent_at")) or datetime.min.replace(tzinfo=_TZ_SH), _safe_text(x.get("message_id"))))
+
+        # Idempotency: if the same file (or an updated file with same content)
+        # is imported again, skip message_ids that already exist.
+        existing_mids: set[str] = set()
+        try:
+            rows = session.exec(
+                select(Message.external_message_id).where(
+                    Message.conversation_id == int(conv.id),  # type: ignore[arg-type]
+                    Message.external_message_id.is_not(None),
+                )
+            ).all()
+            for x in rows:
+                sx = str(x or "").strip()
+                if sx:
+                    existing_mids.add(sx)
+        except Exception:
+            existing_mids = set()
 
         for m in msgs:
             ts = _parse_dt(m.get("sent_at"))
@@ -345,6 +376,8 @@ def import_leyan_jsonl(
                 atts = (atts or []) + [{"type": "refs", **refs}]
 
             mid = _safe_text(m.get("message_id")).strip()
+            if mid and mid in existing_mids:
+                continue
             agent_acc = _safe_text(m.get("assistant_id")).strip()
             agent_n = _safe_text(m.get("assistant_nick")).strip()
             bound_uid = _lookup_bound_user_id(session, platform, agent_acc) if (sender == 'agent' and agent_acc) else None
@@ -362,19 +395,26 @@ def import_leyan_jsonl(
             )
             session.add(msg_row)
             imported_msgs += 1
+            if mid:
+                existing_mids.add(mid)
+            counts_by_date.setdefault(date_str, {"conversations": 0, "messages": 0})
+            counts_by_date[date_str]["messages"] += 1
 
     session.commit()
 
-    dates = sorted(counts_by_date.keys())
+    dates = sorted({ds for (_sid, _bid, ds) in groups.keys()})
     return {
         "ok": True,
         "source": source_filename,
         "platform": platform,
-        "conversations": len(groups),
+        "conversations": imported_convs,
         "messages": imported_msgs,
         "errors": errors,
         "dates": dates,
         "counts_by_date": counts_by_date,
+        "counts_total_by_date": counts_total_by_date,
+        "conversations_total": len(groups),
+        "messages_total": len(lines),
         "agent_accounts": sorted([x for x in agent_accounts_seen if x]),
         "unbound_agent_accounts": sorted([x for x in unbound_agent_accounts if x]),
         "unbound_agent_nicks": unbound_agent_nicks,  # 新增：未绑定账号的昵称映射

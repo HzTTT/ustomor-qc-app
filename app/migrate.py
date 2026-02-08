@@ -12,6 +12,7 @@ MIGRATION_ID = "2026-01-30-ensure_schema-v7-qc"
 SETTINGS_COLUMNS_MIGRATION_ID = "2026-01-30-appconfig-settings-v2"
 REJECTED_TAG_RULES_MIGRATION_ID = "2026-02-03-rejected-tag-rules-v1"
 PRODUCT_QUALITY_SCOPE_MIGRATION_ID = "2026-02-04-product-quality-scope-v1"
+MESSAGE_EXTERNAL_MID_UNIQ_MIGRATION_ID = "2026-02-06-message-external-mid-uniq-v1"
 BACKFILL_ID = "2026-01-27-backfill-multi-agent-v1"
 USERTHREAD_BACKFILL_ID = "2026-01-28-backfill-user-thread-v1"
 
@@ -352,6 +353,60 @@ def ensure_schema() -> None:
     # Separate migration for new AppConfig columns (runs even if v6 was already applied).
     _apply_appconfig_settings_columns(engine)
     _apply_product_quality_scope(engine)
+    _apply_message_external_mid_unique(engine)
+
+
+def _apply_message_external_mid_unique(eng) -> None:
+    """Make leyan/json imports idempotent at the DB level.
+
+    Symptom: if the same day is re-imported (bucket object updated -> new ETag),
+    we may re-insert the same messages and double the Message table.
+    Fix: de-dup (conversation_id, external_message_id) then add a UNIQUE index.
+    """
+    with eng.begin() as conn:
+        _ensure_migrations_table(conn)
+        if _already_applied(conn, MESSAGE_EXTERNAL_MID_UNIQ_MIGRATION_ID):
+            return
+
+        if not _try_advisory_lock(conn, MESSAGE_EXTERNAL_MID_UNIQ_MIGRATION_ID):
+            return
+
+        try:
+            # De-dup before applying UNIQUE index (otherwise CREATE UNIQUE INDEX fails).
+            conn.execute(
+                text(
+                    """
+                    WITH ranked AS (
+                      SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                          PARTITION BY conversation_id, external_message_id
+                          ORDER BY id
+                        ) AS rn
+                      FROM message
+                      WHERE external_message_id IS NOT NULL
+                        AND external_message_id <> ''
+                    )
+                    DELETE FROM message m
+                    USING ranked r
+                    WHERE m.id = r.id
+                      AND r.rn > 1;
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS message_conversation_external_message_id_uniq
+                    ON message (conversation_id, external_message_id)
+                    WHERE external_message_id IS NOT NULL
+                      AND external_message_id <> '';
+                    """
+                )
+            )
+            _mark_applied(conn, MESSAGE_EXTERNAL_MID_UNIQ_MIGRATION_ID)
+        finally:
+            _advisory_unlock(conn, MESSAGE_EXTERNAL_MID_UNIQ_MIGRATION_ID)
 
 
 def _apply_product_quality_scope(eng) -> None:

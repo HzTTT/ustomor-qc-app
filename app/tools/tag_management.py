@@ -6,11 +6,11 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 try:
-    # Preferred: avoid duplicate metadata when imported via `app.*` in tests.
-    from app.models import TagCategory, TagDefinition
-except ImportError:  # pragma: no cover
     # Runtime path when running from `app/` (e.g. `uvicorn main:app`)
     from models import TagCategory, TagDefinition
+except ImportError:  # pragma: no cover
+    # Compat: allow importing via `app.*` in some environments/tests.
+    from app.models import TagCategory, TagDefinition
 
 
 PRODUCT_QUALITY_CATEGORY_NAME = "产品质量投诉"

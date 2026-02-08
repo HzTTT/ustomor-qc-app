@@ -104,7 +104,7 @@ data/sample_batch.json
 **数据导入**
 - `app/importers/json_import.py` - JSON 文件导入器
 - `app/importers/leyan_import.py` - 乐言平台导入器
-- `app/bucket_import.py` - S3 兼容存储桶导入（阿里 OSS/抖音 TOS）
+- `app/bucket_import.py` - S3 兼容存储桶导入（阿里 OSS；支持同桶混合淘宝/抖音自动识别）
 
 **AI 集成**
 - `app/ai_client.py` - OpenAI API 客户端（通过 relay 转发）
@@ -357,7 +357,7 @@ SELECT * FROM table_name LIMIT 10;
 - `psycopg[binary]==3.2.3` - PostgreSQL 驱动
 - `jinja2==3.1.4` - 模板引擎
 - `openpyxl==3.1.5` - Excel 文件处理
-- `boto3==1.34.162` - AWS S3 客户端（用于 OSS/TOS）
+- `boto3==1.34.162` - AWS S3 客户端（用于 OSS/S3 兼容桶）
 
 ### 开发工具
 - Python 3.11+

@@ -65,7 +65,8 @@ async def _post_with_retries(
             raise AIError(
                 "AI请求超时：一直没等到上游返回。\\n"
                 f"- 请求地址: {url}\\n"
-                "建议检查：OPENAI_BASE_URL / Relay 是否在线、网络/VPN是否通畅、以及 OPENAI_TIMEOUT 是否足够。"
+                f"- 超时时间: {float(timeout_s or 0):.0f}s\\n"
+                "建议检查：OPENAI_BASE_URL / Relay 是否在线、网络/VPN是否通畅、以及 OPENAI_TIMEOUT/调用超时是否足够。"
             ) from e
 
         # --- other request-level network errors ---
@@ -252,6 +253,7 @@ async def responses_text(
     model: str | None = None,
     reasoning_effort: str | None = None,
     max_output_tokens: int | None = None,
+    timeout_s: float | None = None,
     retries: int | None = None,
     request_id: str | None = None,
     idempotency_key: str | None = None,
@@ -265,6 +267,8 @@ async def responses_text(
     s = get_ai_settings(session)
     if not s["api_key"]:
         raise AIError("OPENAI_API_KEY 未配置")
+
+    chosen_timeout_s = float(timeout_s if timeout_s is not None else s["timeout_s"])
 
     url = f"{s['base_url']}/responses"
     headers = {"Authorization": f"Bearer {s['api_key']}"}
@@ -285,7 +289,7 @@ async def responses_text(
             url=url,
             headers=headers,
             payload=payload,
-            timeout_s=float(s["timeout_s"]),
+            timeout_s=chosen_timeout_s,
             retries=int(s.get("retries") or 0) if retries is None else int(retries),
             request_id=request_id,
             idempotency_key=idempotency_key,
@@ -301,8 +305,30 @@ async def responses_text(
             "请检查：Relay 是否已支持并开启 Responses API，或切换到支持 /v1/responses 的上游。"
         )
 
-    # Auto-fallback only for model_not_found
-    if r.status_code == 404 and "model" in (r.text or "").lower():
+    def _is_model_not_found(resp: httpx.Response) -> bool:
+        if int(resp.status_code) not in (400, 404):
+            return False
+        # Prefer structured OpenAI-style error payloads.
+        try:
+            data = resp.json()
+            if isinstance(data, dict):
+                err = data.get("error")
+                if isinstance(err, dict):
+                    code = (err.get("code") or "").strip()
+                    if code == "model_not_found":
+                        return True
+        except Exception:
+            pass
+        # Fallback: text heuristic (relay differences).
+        txt = (resp.text or "").lower()
+        if "model_not_found" in txt:
+            return True
+        if ("requested model" in txt and "does not exist" in txt) or ("model" in txt and "not found" in txt):
+            return True
+        return False
+
+    # Auto-fallback only for model_not_found (some relays return 400 instead of 404)
+    if _is_model_not_found(r):
         fallback = _pick_fallback(preferred, session)
         if fallback and fallback != preferred:
             r2 = await _call(fallback)
@@ -313,7 +339,7 @@ async def responses_text(
                     return text
                 raise AIError(f"AI返回格式异常: {str(data)[:500]}")
             raise AIError(
-                "AI请求失败(404): 模型不可用。\n"
+                f"AI请求失败({r.status_code}): 模型不可用。\n"
                 f"- 首选模型: {preferred}\n"
                 f"- 回退模型: {fallback}\n"
                 f"- 回退报错: {r2.text[:500]}"
@@ -341,6 +367,7 @@ async def chat_completion(
     temperature: float = 0.2,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    timeout_s: float | None = None,
     retries: int | None = None,
     request_id: str | None = None,
     idempotency_key: str | None = None,
@@ -360,6 +387,7 @@ async def chat_completion(
         instructions=instructions or None,
         model=model,
         reasoning_effort=reasoning_effort,
+        timeout_s=timeout_s,
         retries=retries,
         request_id=request_id,
         idempotency_key=idempotency_key,

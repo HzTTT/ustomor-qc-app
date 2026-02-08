@@ -17,6 +17,13 @@
       <label class="block text-sm text-slate-600 mb-1">密码</label>
       <input name="password" type="password" class="w-full border rounded-xl px-3 py-2" required />
     </div>
+    <div class="flex items-center justify-between">
+      <label class="inline-flex items-center gap-2 text-sm text-slate-600 select-none">
+        <input type="hidden" name="remember" value="off" />
+        <input name="remember" type="checkbox" value="on" checked class="rounded border-slate-300" />
+        <span>保持登录{{ remember_days or 7 }}天</span>
+      </label>
+    </div>
     <button class="w-full bg-slate-900 text-white rounded-xl py-2">登录</button>
   </form>
   <div class="mt-4 text-sm text-slate-500">

@@ -35,23 +35,23 @@
 
           <div class="flex items-center gap-2 text-sm">
             {% if user %}
-              <details class="relative hidden sm:block">
-                <summary class="list-none cursor-pointer px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50">系统设置</summary>
-                <div class="absolute right-0 mt-2 w-56 bg-white border rounded-lg shadow-lg p-2 z-50">
-                  {% if user.role in ["admin", "supervisor"] %}
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/general">应用设置</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/bindings">客服绑定</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/dashboard">同步概览</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/bucket">桶抓取/导入</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/tags">标签管理</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai">AI配置</a>
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai/daily">每日AI总结</a>
-                  {% endif %}
-                  {% if user.role == "admin" %}
-                    <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/admin/users">账号管理</a>
-                  {% endif %}
-                </div>
-              </details>
+              {% if user.role in ["admin", "supervisor"] %}
+                <details class="relative hidden sm:block">
+                  <summary class="list-none cursor-pointer px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50">系统设置</summary>
+                  <div class="absolute right-0 mt-2 w-56 bg-white border rounded-lg shadow-lg p-2 z-50">
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/general">应用设置</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/bindings">客服绑定</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/dashboard">同步概览</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/bucket">桶抓取/导入</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/tags">标签管理</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai">AI配置</a>
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/settings/ai/daily">每日AI总结</a>
+                    {% if user.role == "admin" %}
+                      <a class="block px-3 py-2 rounded hover:bg-slate-50" href="/admin/users">账号管理</a>
+                    {% endif %}
+                  </div>
+                </details>
+              {% endif %}
               <span class="hidden sm:inline text-slate-500 max-w-[10rem] truncate">{{ user.name }}</span>
               <a class="hidden sm:inline hover:underline" href="/logout">退出</a>
               <a class="sm:hidden px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50" href="/logout">退出</a>
@@ -164,6 +164,87 @@
   </div>
 
   <script>
+    // Body scroll lock manager (mobile-friendly, supports nested locks)
+    (function () {
+      if (window.__marllenScrollLock) return;
+
+      const state = {
+        count: 0,
+        scrollY: 0,
+        prevBody: null,
+        prevHtml: null,
+      };
+
+      function lock() {
+        state.count += 1;
+        if (state.count !== 1) return;
+
+        const body = document.body;
+        const html = document.documentElement;
+        if (!body || !html) return;
+
+        state.scrollY = window.scrollY || window.pageYOffset || 0;
+        state.prevBody = {
+          position: body.style.position || "",
+          top: body.style.top || "",
+          left: body.style.left || "",
+          right: body.style.right || "",
+          width: body.style.width || "",
+          overflow: body.style.overflow || "",
+        };
+        state.prevHtml = {
+          overflow: html.style.overflow || "",
+          overscrollBehavior: html.style.overscrollBehavior || "",
+        };
+
+        // iOS/Safari: overflow hidden alone is not enough; use position: fixed.
+        body.style.position = "fixed";
+        body.style.top = "-" + String(state.scrollY) + "px";
+        body.style.left = "0";
+        body.style.right = "0";
+        body.style.width = "100%";
+        body.style.overflow = "hidden";
+
+        // Avoid scroll chaining on supporting browsers.
+        html.style.overflow = "hidden";
+        html.style.overscrollBehavior = "none";
+      }
+
+      function unlock() {
+        if (state.count <= 0) return;
+        state.count -= 1;
+        if (state.count !== 0) return;
+
+        const body = document.body;
+        const html = document.documentElement;
+        if (!body || !html) return;
+
+        const y = state.scrollY || 0;
+        const prevBody = state.prevBody || {};
+        const prevHtml = state.prevHtml || {};
+
+        body.style.position = prevBody.position || "";
+        body.style.top = prevBody.top || "";
+        body.style.left = prevBody.left || "";
+        body.style.right = prevBody.right || "";
+        body.style.width = prevBody.width || "";
+        body.style.overflow = prevBody.overflow || "";
+
+        html.style.overflow = prevHtml.overflow || "";
+        html.style.overscrollBehavior = prevHtml.overscrollBehavior || "";
+
+        state.prevBody = null;
+        state.prevHtml = null;
+        state.scrollY = 0;
+
+        try { window.scrollTo(0, y); } catch (e) {}
+      }
+
+      window.__marllenScrollLock = { lock, unlock };
+    })();
+  </script>
+
+  <script>
     (function () {
       const CID_RE = /\bCID=(\d+)\b/g;
       const SKIP_TAGS = new Set(["SCRIPT","STYLE","TEXTAREA","INPUT","CODE","PRE"]);
@@ -234,14 +315,14 @@
         if (!modal) return;
         modal.classList.remove("hidden");
         modal.setAttribute("aria-hidden", "false");
-        document.body.style.overflow = "hidden";
+        try { window.__marllenScrollLock && window.__marllenScrollLock.lock(); } catch (e) {}
       }
 
       function hideModal() {
         if (!modal) return;
         modal.classList.add("hidden");
         modal.setAttribute("aria-hidden", "true");
-        document.body.style.overflow = "";
+        try { window.__marllenScrollLock && window.__marllenScrollLock.unlock(); } catch (e) {}
       }
 
       function senderLabel(sender) {
@@ -436,13 +517,13 @@
       function open() {
         nav.classList.remove("hidden");
         nav.setAttribute("aria-hidden", "false");
-        document.body.style.overflow = "hidden";
+        try { window.__marllenScrollLock && window.__marllenScrollLock.lock(); } catch (e) {}
       }
 
       function close() {
         nav.classList.add("hidden");
         nav.setAttribute("aria-hidden", "true");
-        document.body.style.overflow = "";
+        try { window.__marllenScrollLock && window.__marllenScrollLock.unlock(); } catch (e) {}
       }
 
       btnOpen && btnOpen.addEventListener("click", open);
@@ -454,6 +535,107 @@
       });
     })();
   </script>
+
+  {% if user and user.role in ["admin", "supervisor", "agent"] %}
+    <!-- Marllen Assistant: draggable floating AI butler -->
+    <div
+      id="marllenAssistant"
+      class="fixed z-[55]"
+      style="right: 16px; bottom: 16px;"
+      data-can-write="1"
+      data-read-only="{{ '1' if user.role == 'agent' else '0' }}"
+      data-user-role="{{ user.role }}"
+    >
+      <!-- Collapsed FAB -->
+      <button
+        id="marllenAssistantFab"
+        type="button"
+        class="group inline-flex items-center gap-2 pl-2 pr-3 py-2 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white shadow-xl hover:from-slate-800 hover:to-slate-700 ring-1 ring-white/10"
+        aria-label="打开 Marllen 小助手"
+      >
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-black/5 group-hover:bg-white">
+          <span class="marllen-logo h-5 w-5" aria-hidden="true"></span>
+        </span>
+        <span class="leading-tight text-left">
+          <span class="block text-sm font-semibold">Marllen小助手</span>
+          <span class="block text-[11px] text-white/80">欢迎咨询任何关于客服的问题!</span>
+        </span>
+      </button>
+
+      <!-- Expanded panel -->
+      <div id="marllenAssistantPanel" class="relative hidden w-[340px] sm:w-[420px] h-[560px] max-h-[calc(100vh-32px)] bg-white/90 backdrop-blur border border-slate-200 rounded-2xl shadow-[0_24px_80px_rgba(0,0,0,0.18)] overflow-hidden flex flex-col">
+        <div id="marllenAssistantHeader" class="px-3 py-2 bg-white/70 backdrop-blur border-b flex items-center justify-between cursor-move select-none">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="h-9 w-9 rounded-xl bg-white ring-1 ring-slate-200 flex items-center justify-center shadow-sm">
+              <span class="marllen-logo h-5 w-5" aria-hidden="true"></span>
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <div class="text-sm font-semibold truncate">Marllen小助手</div>
+                <span id="marllenAssistantMode" class="hidden text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 whitespace-nowrap">只读</span>
+              </div>
+              <div id="marllenAssistantStatus" class="text-[11px] text-slate-500 hidden"></div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="marllenAssistantThreads" type="button" class="px-3 py-1.5 rounded-xl border bg-white text-xs hover:bg-slate-50">对话</button>
+            <button id="marllenAssistantNew" type="button" class="px-3 py-1.5 rounded-xl border bg-white text-xs hover:bg-slate-50">新对话</button>
+            <button id="marllenAssistantMin" type="button" class="px-3 py-1.5 rounded-xl border bg-white text-xs hover:bg-slate-50">收起</button>
+          </div>
+        </div>
+
+        <div id="marllenAssistantError" class="hidden px-3 py-2 text-xs text-red-700 bg-red-50 border-b whitespace-pre-wrap"></div>
+
+        <div id="marllenAssistantMessages" class="flex-1 overflow-auto p-3 space-y-2 bg-slate-50"></div>
+
+        <div class="p-3 border-t bg-white">
+          <div id="marllenAssistantTip" class="mb-2 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-900">
+            <div class="mt-[1px] inline-flex h-5 w-5 items-center justify-center rounded-lg bg-amber-100 text-amber-700 font-bold">!</div>
+            <div class="leading-relaxed flex-1">
+              复杂问题会去数据库检索与分析，可能需要几十秒～几分钟才回复（不是秒回）。期间系统一次只处理一个问题，请耐心等待，避免重复发送。
+            </div>
+            <button
+              id="marllenAssistantTipClose"
+              type="button"
+              class="shrink-0 -mr-1 mt-[1px] rounded-lg p-1 text-amber-700/80 hover:bg-amber-100 hover:text-amber-800"
+              aria-label="关闭提示"
+              title="关闭提示"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
+              </svg>
+            </button>
+          </div>
+          <div class="flex items-end gap-2">
+            <textarea
+              id="marllenAssistantInput"
+              rows="2"
+              class="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-300 placeholder:text-slate-400"
+            ></textarea>
+            <button id="marllenAssistantSend" type="button" class="px-4 py-2 rounded-xl bg-slate-900 text-white text-sm hover:bg-slate-800 active:scale-[0.99] disabled:opacity-60">发送</button>
+          </div>
+          <div class="mt-2 text-[11px] text-slate-500">Enter 发送，Shift+Enter 换行。回答会写入后台，刷新/换页不丢。</div>
+        </div>
+
+        <!-- Threads overlay (conversation switcher) -->
+        <div id="marllenAssistantThreadsOverlay" class="hidden absolute inset-0 bg-white/95 backdrop-blur flex flex-col">
+          <div class="px-3 py-2 border-b bg-white/80 backdrop-blur flex items-center justify-between">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold truncate">对话列表</div>
+              <div class="text-[11px] text-slate-500">切换之前的提问</div>
+            </div>
+            <button id="marllenAssistantThreadsClose" type="button" class="px-3 py-1.5 rounded-xl border bg-white text-xs hover:bg-slate-50">关闭</button>
+          </div>
+          <div class="p-2 border-b bg-white/70">
+            <input id="marllenAssistantThreadsSearch" type="text" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-200 focus:border-slate-300 placeholder:text-slate-400" placeholder="搜索标题…" />
+          </div>
+          <div id="marllenAssistantThreadsList" class="flex-1 overflow-auto p-2 space-y-2"></div>
+          <div id="marllenAssistantThreadsHint" class="px-3 py-2 text-[11px] text-slate-500 border-t bg-white/70 hidden"></div>
+        </div>
+      </div>
+    </div>
+    <script src="/static/marllen_assistant.js"></script>
+  {% endif %}
 
 </body>
 </html>

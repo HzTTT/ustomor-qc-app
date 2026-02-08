@@ -44,6 +44,8 @@ docker compose up --build
 - 默认关闭自助注册（`OPEN_REGISTRATION=0`），管理员通过“账号管理”创建/重置子账号
 - 你未来放到 relay 服务器上时：
   - 改 `APP_SECRET_KEY`
+  - 需要“设备免登录”更久：改 `REMEMBER_EXPIRE_DAYS`（默认 7 天）
+  - 上 HTTPS 后建议设 `COOKIE_SECURE=1`（否则会走明文 HTTP 也发送 cookie）
   - 用 Nginx 反代 + HTTPS
 
 ## 5) 你下一步最值得做的增强（建议）
@@ -54,4 +56,4 @@ docker compose up --build
 
 ---
 
-如需我把它接上你后续的 COS/OSS/TOS 数据导入与定时任务，我建议你提供一份你准备采用的最终 JSON（或第三方原始格式）样例即可。
+如需我把它接上你后续的 COS/OSS（S3 兼容）数据导入与定时任务，我建议你提供一份你准备采用的最终 JSON（或第三方原始格式）样例即可。

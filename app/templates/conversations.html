@@ -482,6 +482,16 @@
 	        </div>
 
 	        <div class="md:col-span-3 lg:col-span-2">
+	          <label class="filter-label block mb-2">平台</label>
+	          <select name="platform" class="filter-select text-sm">
+	            <option value="">全部</option>
+              {% for p in platform_options %}
+                <option value="{{ p }}" {% if platform == p %}selected{% endif %}>{{ platform_labels.get(p, p) }}</option>
+              {% endfor %}
+	          </select>
+	        </div>
+
+	        <div class="md:col-span-3 lg:col-span-2">
 	          <label class="filter-label block mb-2">消息轮数范围</label>
 	          <div class="flex items-center gap-2">
 	            <input name="min_rounds" type="number" min="0" value="{{ min_rounds }}" placeholder="最低" class="filter-input flex-1" />
@@ -566,6 +576,7 @@
       <thead>
         <tr>
           <th class="text-left px-4 py-3">CID 编号</th>
+          <th class="text-left px-4 py-3">平台</th>
           <th class="text-left px-4 py-3">时间</th>
           <th class="text-left px-4 py-3">轮数</th>
           <th class="text-left px-4 py-3">客服</th>
@@ -582,6 +593,10 @@
           {% set conv_tags = tags_by_conv.get(c.id, []) %}
           <tr class="border-t border-slate-100">
             <td class="px-4 py-3 text-slate-700 font-medium">{{ c.id }}</td>
+            <td class="px-4 py-3">
+              {% set p = (c.platform or "unknown")|lower %}
+              <span class="inline-flex items-center justify-center text-xs px-2 py-1 rounded-full bg-slate-50 border text-slate-700 whitespace-nowrap">{{ platform_labels.get(p, p) }}</span>
+            </td>
             <td class="px-4 py-3 text-slate-600">{% if ts %}{{ ts.strftime("%Y-%m-%d %H:%M") }}{% else %}-{% endif %}</td>
             <td class="px-4 py-3 text-slate-700">{{ rounds_by_conv.get(c.id, 0) }}</td>
             <td class="px-4 py-3">{{ display_agent_label_by_conv.get(c.id, "-") }}</td>
@@ -626,7 +641,7 @@
         {% endfor %}
         {% if convos|length == 0 %}
           <tr class="border-t border-slate-100">
-            <td class="px-4 py-6 text-slate-500" colspan="8">暂无数据</td>
+            <td class="px-4 py-6 text-slate-500" colspan="9">暂无数据</td>
           </tr>
         {% endif %}
       </tbody>
@@ -1136,6 +1151,9 @@
 
       var hasAnalysis = (form.querySelector('select[name="has_analysis"]') || {}).value || "";
       if (hasAnalysis) params.append("has_analysis", hasAnalysis);
+
+      var platform = (form.querySelector('select[name="platform"]') || {}).value || "";
+      if (platform) params.append("platform", platform);
 
       var onlyFlagged = form.querySelector('input[name="only_flagged"][type="checkbox"]');
       if (onlyFlagged && onlyFlagged.checked) params.append("only_flagged", "1");

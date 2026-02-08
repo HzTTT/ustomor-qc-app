@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from urllib.parse import urlparse
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -22,7 +23,7 @@ class Settings(BaseSettings):
     """
 
     # Legacy override. Only used when USE_POSTGRES_ENV=0.
-    DATABASE_URL: str | None = None
+    DATABASE_URL: Optional[str] = None
 
     # Default: build url from POSTGRES_* env.
     USE_POSTGRES_ENV: bool = True
@@ -66,11 +67,18 @@ def _safe_db_hint(url: str) -> str:
         return "(unparsed)"
 
 
+_connect_args: dict = {}
+if str(DATABASE_URL).startswith("sqlite"):
+    # Needed for sqlite when used in multi-thread test clients / dev reloaders.
+    _connect_args = {"check_same_thread": False}
+else:
+    # Avoid hanging forever if DNS/network is flaky inside Docker.
+    _connect_args = {"connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "5"))}
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    # Avoid hanging forever if DNS/network is flaky inside Docker.
-    connect_args={"connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "5"))},
+    connect_args=_connect_args,
 )
 
 

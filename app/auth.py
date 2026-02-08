@@ -16,7 +16,11 @@ from models import User
 class AuthSettings(BaseSettings):
     APP_SECRET_KEY: str = "change-me"
     TOKEN_EXPIRE_HOURS: int = 72
+    # “保持登录”时的有效期（基于设备 cookie 免登录）
+    REMEMBER_EXPIRE_DAYS: int = 7
     COOKIE_NAME: str = "qc_token"
+    # 生产环境(HTTPS)建议设为 True；本地 http 开发默认 False，避免 cookie 不生效
+    COOKIE_SECURE: bool = False
 
     class Config:
         case_sensitive = False
@@ -36,9 +40,10 @@ def verify_password(password: str, password_hash: str) -> bool:
     return _pwd.verify(password, password_hash)
 
 
-def create_token(user: User) -> str:
+def create_token(user: User, *, expire_hours: int | None = None) -> str:
     now = datetime.utcnow()
-    exp = now + timedelta(hours=auth_settings.TOKEN_EXPIRE_HOURS)
+    hours = auth_settings.TOKEN_EXPIRE_HOURS if expire_hours is None else int(expire_hours)
+    exp = now + timedelta(hours=hours)
     payload = {
         "sub": str(user.id),
         "email": user.email,

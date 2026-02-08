@@ -1,7 +1,7 @@
 from sqlmodel import Session
 
-from app.models import Role, User
-from app.tools.user_admin import validate_role_change
+from models import Role, User
+from tools.user_admin import validate_role_change
 
 
 def test_validate_role_change_blocks_demote_last_admin(session: Session):
@@ -44,4 +44,3 @@ def test_validate_role_change_blocks_inactive_user(session: Session):
 
     err = validate_role_change(session=session, target_user=target, new_role=Role.supervisor, acting_user=acting)
     assert err == "该账号已删除，无法编辑"
-

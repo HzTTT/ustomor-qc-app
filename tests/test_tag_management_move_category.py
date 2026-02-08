@@ -2,8 +2,8 @@ from sqlmodel import Session
 
 import pytest
 
-from app.models import TagCategory, TagDefinition
-from app.tools.tag_management import update_tag_definition
+from models import TagCategory, TagDefinition
+from tools.tag_management import update_tag_definition
 
 
 def test_update_tag_can_move_category_and_reorder(session: Session):
@@ -92,4 +92,3 @@ def test_update_tag_move_category_invalid_category(session: Session):
             is_active=True,
         )
     assert str(e.value) == "所属分类不存在"
-

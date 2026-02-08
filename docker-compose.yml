@@ -46,7 +46,7 @@ services:
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-0357zaqxswcde}
       # AI / Relay
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://www.marllen.com:4000/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-chatgpt-5.1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-1800}
       OPENAI_RETRIES: ${OPENAI_RETRIES:-0}
@@ -75,7 +75,7 @@ services:
       POSTGRES_DB: qc
       APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-in-prod}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://www.marllen.com:4000/v1}
-      OPENAI_MODEL: ${OPENAI_MODEL:-chatgpt-5.1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.2}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-1800}
       OPENAI_RETRIES: ${OPENAI_RETRIES:-0}

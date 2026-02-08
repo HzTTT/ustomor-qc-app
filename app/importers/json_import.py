@@ -202,6 +202,21 @@ def import_json_batch(
                 conv.agent_user_id = agent.id
 
         # Messages（可选）
+        existing_mids: set[str] = set()
+        try:
+            rows = session.exec(
+                select(Message.external_message_id).where(
+                    Message.conversation_id == int(conv.id),  # type: ignore[arg-type]
+                    Message.external_message_id.is_not(None),
+                )
+            ).all()
+            for x in rows:
+                sx = str(x or "").strip()
+                if sx:
+                    existing_mids.add(sx)
+        except Exception:
+            existing_mids = set()
+
         for m in (item.get("messages") or []):
             attachments = m.get("attachments")
             if not attachments:
@@ -215,6 +230,8 @@ def import_json_batch(
                     attachments.append({"type": "file", "url": _to_text(it)})
             sender = _to_text(m.get("sender") or "unknown")
             ext_mid = _to_text(m.get("external_message_id") or m.get("message_id"))
+            if ext_mid and ext_mid in existing_mids:
+                continue
             agent_acc = _to_text(m.get("agent_account") or m.get("assistant_id"))
             agent_nick = _to_text(m.get("agent_nick") or m.get("assistant_nick"))
 
@@ -242,6 +259,8 @@ def import_json_batch(
                     agent_user_id=agent_user_id if sender == "agent" else None,
                 )
             )
+            if ext_mid:
+                existing_mids.add(ext_mid)
 
         analysis = item.get("analysis") or item.get("AI分析") or {}
 
