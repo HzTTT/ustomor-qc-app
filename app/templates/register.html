@@ -5,24 +5,55 @@
   {% if error %}
     <div class="mb-4 text-sm text-red-600">{{ error }}</div>
   {% endif %}
-  <form method="post" action="/register" class="space-y-3">
+  <form method="post" action="/register" class="space-y-3" autocomplete="on">
     <div>
-      <label class="block text-sm text-slate-600 mb-1">用户名</label>
-      <input name="username" type="text" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="register-username" class="block text-sm text-slate-600 mb-1">用户名</label>
+      <input
+        id="register-username"
+        name="username"
+        type="text"
+        class="w-full border rounded-xl px-3 py-2"
+        autocomplete="username"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        required
+      />
     </div>
     <div>
-      <label class="block text-sm text-slate-600 mb-1">姓名</label>
-      <input name="name" type="text" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="register-name" class="block text-sm text-slate-600 mb-1">姓名</label>
+      <input id="register-name" name="name" type="text" class="w-full border rounded-xl px-3 py-2" autocomplete="name" required />
     </div>
     <div>
-      <label class="block text-sm text-slate-600 mb-1">邮箱</label>
-      <input name="email" type="email" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="register-email" class="block text-sm text-slate-600 mb-1">邮箱</label>
+      <input
+        id="register-email"
+        name="email"
+        type="email"
+        class="w-full border rounded-xl px-3 py-2"
+        autocomplete="email"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        inputmode="email"
+        required
+      />
     </div>
     <div>
-      <label class="block text-sm text-slate-600 mb-1">密码（至少6位）</label>
-      <input name="password" type="password" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="register-password" class="block text-sm text-slate-600 mb-1">密码（至少6位）</label>
+      <input
+        id="register-password"
+        name="password"
+        type="password"
+        class="w-full border rounded-xl px-3 py-2"
+        autocomplete="new-password"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        required
+      />
     </div>
-    <button class="w-full bg-slate-900 text-white rounded-xl py-2">注册并登录</button>
+    <button type="submit" class="w-full bg-slate-900 text-white rounded-xl py-2">注册并登录</button>
   </form>
   <div class="mt-4 text-sm text-slate-500">
     已有账号？<a class="underline" href="/login">去登录</a>

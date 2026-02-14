@@ -5,11 +5,15 @@ import os
 import json
 import re
 import time
-import shlex
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlmodel import Session, select
+
+try:  # pragma: no cover
+    from db import engine  # type: ignore
+except Exception:  # pragma: no cover
+    from app.db import engine  # type: ignore
 
 try:  # pragma: no cover
     from models import (  # type: ignore
@@ -67,12 +71,13 @@ ASSISTANT_CODEX_APPROVAL = (os.getenv("MARLLEN_ASSISTANT_CODEX_APPROVAL", "never
 ASSISTANT_CODEX_OSS = (os.getenv("MARLLEN_ASSISTANT_CODEX_OSS", "0") or "0").strip().lower() in ("1", "true", "yes", "y", "on")
 ASSISTANT_CODEX_LOCAL_PROVIDER = (os.getenv("MARLLEN_ASSISTANT_CODEX_LOCAL_PROVIDER", "") or "").strip().lower()
 
-_ASSISTANT_TIMEOUT_S = 180
+_ASSISTANT_TIMEOUT_S = 1800
 try:
-    _ASSISTANT_TIMEOUT_S = int(os.getenv("MARLLEN_ASSISTANT_TIMEOUT", "180") or "180")
+    _ASSISTANT_TIMEOUT_S = int(os.getenv("MARLLEN_ASSISTANT_TIMEOUT", "1800") or "1800")
 except Exception:
-    _ASSISTANT_TIMEOUT_S = 180
-ASSISTANT_TIMEOUT_S = max(30, min(900, _ASSISTANT_TIMEOUT_S))
+    _ASSISTANT_TIMEOUT_S = 1800
+# Product expectation: allow long-running answers, up to 30 minutes.
+ASSISTANT_TIMEOUT_S = max(30, min(1800, _ASSISTANT_TIMEOUT_S))
 
 _assistant_stale_default = max(180, ASSISTANT_TIMEOUT_S + 90)
 try:
@@ -85,6 +90,51 @@ ASSISTANT_JOB_STALE_SECONDS = max(60, min(7200, int(ASSISTANT_JOB_STALE_SECONDS)
 
 
 CHART_BLOCK_RE = re.compile(r"```chart\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def assistant_codex_paths(*, job_id: int, attempt: int) -> tuple[str, str]:
+    """Shared file paths for Codex job artifacts (app+worker containers).
+
+    We intentionally write logs into a shared mount (e.g. /workspace) so the web
+    app can show real-time progress while the worker is running.
+    """
+    base = (os.getenv("MARLLEN_ASSISTANT_ARTIFACT_DIR") or "").strip()
+    if not base:
+        base = "/workspace/tmp/marllen_assistant" if os.path.isdir("/workspace") else "/tmp/marllen_assistant"
+    base = base.rstrip("/")
+    out_path = f"{base}/codex_job_{int(job_id)}_attempt_{int(attempt)}.md"
+    log_path = f"{base}/codex_job_{int(job_id)}_attempt_{int(attempt)}.log"
+    return out_path, log_path
+
+
+def _job_stop_requested(job_id: int) -> bool:
+    """Check if the job should stop (user canceled / recovered / externally finished)."""
+    if not job_id:
+        return False
+    try:
+        with Session(engine) as s:
+            j = s.get(AssistantJob, int(job_id))
+            if not j:
+                return True
+            st = _job_status_str(j)
+            if st in ("done", "error"):
+                return True
+            if _job_is_canceled(j):
+                return True
+    except Exception:
+        # Best-effort: if DB is temporarily unavailable, don't kill the process.
+        return False
+    return False
+
+
+def _get_ai_client():
+    """Late import to keep marllen_assistant import-light in tests/worker."""
+    try:  # pragma: no cover
+        from ai_client import AIError, chat_completion  # type: ignore
+    except Exception:  # pragma: no cover
+        from app.ai_client import AIError, chat_completion  # type: ignore
+    return AIError, chat_completion
+
 
 def _role_str(role: Any) -> str:
     try:
@@ -130,6 +180,117 @@ def _job_is_canceled(job: AssistantJob | None) -> bool:
     if "canceled by user" in err:
         return True
     return False
+
+
+def _utc_iso_z(dt: datetime | None = None) -> str:
+    """Serialize as ISO8601 with a trailing Z for UTC.
+
+    We store DB timestamps as naive UTC (datetime.utcnow()) in this project.
+    This helper is for JSON meta fields (e.g. heartbeats), not for DB columns.
+    """
+    d = dt or datetime.utcnow()
+    try:
+        # Keep it simple: naive UTC + 'Z'
+        return d.replace(microsecond=0).isoformat() + "Z"
+    except Exception:
+        return str(d)
+
+
+def _parse_utc_iso_maybe(s: Any) -> datetime | None:
+    """Parse a best-effort UTC datetime from ISO strings like '...Z'."""
+    if not s:
+        return None
+    try:
+        ss = str(s).strip()
+        if not ss:
+            return None
+        if ss.endswith("Z"):
+            ss = ss[:-1] + "+00:00"
+        d = datetime.fromisoformat(ss)
+        # Normalize to naive UTC to match our DB timestamps.
+        if getattr(d, "tzinfo", None) is not None:
+            d = d.astimezone(timezone.utc).replace(tzinfo=None)
+        return d
+    except Exception:
+        return None
+
+
+def _job_heartbeat_dt(job: AssistantJob | None) -> datetime | None:
+    if not job:
+        return None
+    try:
+        extra = job.extra or {}
+        if isinstance(extra, dict):
+            return _parse_utc_iso_maybe(extra.get("heartbeat_at"))
+    except Exception:
+        return None
+    return None
+
+
+def _ensure_assistant_job_error_message(session: Session, job: AssistantJob, err: str) -> None:
+    """Persist a visible assistant message for a failed job.
+
+    Why: if the user refreshes or closes the assistant panel, the frontend may no longer
+    be polling `/jobs/{id}`. Without a message, it looks like "nothing happened".
+    """
+    try:
+        if getattr(job, "assistant_message_id", None):
+            return
+    except Exception:
+        pass
+
+    tid = int(getattr(job, "thread_id", 0) or 0)
+    if not tid:
+        return
+
+    short = (err or "").strip()
+    if len(short) > 240:
+        short = short[:240].rstrip() + "…"
+    if not short:
+        short = "未知错误"
+
+    # Keep the tone calm and practical; avoid overly technical wording.
+    content = (
+        "刚才这条没生成出来。\n"
+        f"原因：{short}\n"
+        "\n"
+        "你可以直接再问一次；如果经常出现，通常是网络波动或上游 AI 卡住了。"
+    )
+
+    try:
+        msg = AssistantMessage(
+            thread_id=tid,
+            role="assistant",
+            content=content,
+            meta={"type": "job_error", "job_id": int(getattr(job, "id", 0) or 0)},
+        )
+        session.add(msg)
+        # Best-effort bump thread updated_at so it floats to the top in thread list.
+        try:
+            t = session.get(AssistantThread, tid)
+            if t:
+                t.updated_at = datetime.utcnow()
+                session.add(t)
+        except Exception:
+            pass
+        session.commit()
+        session.refresh(msg)
+
+        # Link back to job to make job API able to surface the message too.
+        try:
+            job.assistant_message_id = int(msg.id or 0)  # type: ignore
+            session.add(job)
+            session.commit()
+        except Exception:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
 
 
 def _assistant_messages_to_instructions_and_input(messages: list[dict[str, str]]) -> tuple[str, str]:
@@ -230,18 +391,26 @@ async def _assistant_generate_reply_via_codex(
     job: AssistantJob,
     messages: list[dict[str, str]],
 ) -> tuple[str, dict[str, Any]]:
-    """Generate assistant reply by calling local `codex exec` via clawd-relay."""
-    from clawd_relay_client import exec_via_clawd_relay, ClawdRelayError  # type: ignore
+    """Generate assistant reply by calling local `codex exec` directly (no clawd-relay)."""
 
     job_id = int(getattr(job, "id", 0) or 0)
     attempt = int(getattr(job, "attempts", 0) or 0)
 
     prompt = _assistant_build_codex_prompt(messages)
-    codex_cwd = ASSISTANT_CODEX_CWD or "/Users/marllenos/customor-qc-app"
+    # Prefer configured cwd; otherwise auto-pick a sensible workspace path.
+    codex_cwd = (ASSISTANT_CODEX_CWD or "").strip()
+    if codex_cwd and not os.path.isdir(codex_cwd):
+        codex_cwd = ""
+    if not codex_cwd:
+        for p in ("/workspace", "/app", "/Users/marllenos/customor-qc-app"):
+            if os.path.isdir(p):
+                codex_cwd = p
+                break
+    if not codex_cwd:
+        codex_cwd = os.getcwd()
     sandbox = ASSISTANT_CODEX_SANDBOX if ASSISTANT_CODEX_SANDBOX in ("read-only", "workspace-write", "danger-full-access") else "workspace-write"
     approval = ASSISTANT_CODEX_APPROVAL if ASSISTANT_CODEX_APPROVAL in ("untrusted", "on-failure", "on-request", "never") else "never"
-    out_path = f"/tmp/marllen_assistant_codex_job_{job_id}_attempt_{attempt}.md"
-    log_path = f"/tmp/marllen_assistant_codex_job_{job_id}_attempt_{attempt}.log"
+    out_path, log_path = assistant_codex_paths(job_id=job_id, attempt=attempt)
 
     argv: list[str] = [
         "codex",
@@ -268,21 +437,11 @@ async def _assistant_generate_reply_via_codex(
         argv += ["-m", ASSISTANT_CODEX_MODEL]
     argv.append(prompt)
 
-    cmd = " ".join(shlex.quote(a) for a in argv)
-    # Keep stdout clean: write Codex logs to log_path, only cat the last message.
-    bash_cmd = (
-        f"{cmd} > /dev/null 2> {shlex.quote(log_path)}; "
-        "rc=$?; "
-        f"if [ $rc -ne 0 ]; then echo \"CODEX_EXIT_CODE=$rc\"; cat {shlex.quote(log_path)}; exit $rc; fi; "
-        f"cat {shlex.quote(out_path)}; "
-        f"rm -f {shlex.quote(out_path)} {shlex.quote(log_path)}"
-    )
-
     if ASSISTANT_SAVE_TRACE:
         try:
             trace = {
                 "ts": datetime.utcnow().isoformat(),
-                "runner": "clawd-relay",
+                "runner": "local",
                 "codex_cwd": codex_cwd,
                 "sandbox": sandbox,
                 "model": ASSISTANT_CODEX_MODEL or None,
@@ -291,7 +450,8 @@ async def _assistant_generate_reply_via_codex(
                 "prompt_chars": len(prompt),
                 "prompt_preview": (prompt[:20000] + "…") if len(prompt) > 20000 else prompt,
                 "argv": argv[:-1] + ["<PROMPT>"],
-                "bash_cmd_preview": (bash_cmd[:2000] + "…") if len(bash_cmd) > 2000 else bash_cmd,
+                "output_last_message": out_path,
+                "stderr_log": log_path,
             }
             job.extra = {**(job.extra or {}), "trace_codex": trace}
             session.add(job)
@@ -303,23 +463,106 @@ async def _assistant_generate_reply_via_codex(
                 pass
 
     t0 = time.time()
+    # Run codex and keep stdout clean; capture stderr to log_path for debugging.
+    ok = False
     try:
-        res = await exec_via_clawd_relay(
-            command=f"bash -lc {shlex.quote(bash_cmd)}",
-            cwd=codex_cwd,
-            timeout_s=max(30.0, float(ASSISTANT_TIMEOUT_S) + 120.0),
-            timeout_ms=int(max(30, ASSISTANT_TIMEOUT_S + 60) * 1000),
-            include_output=True,
-            max_output_bytes=512 * 1024,
-        )
-    except ClawdRelayError:
-        raise
-    except Exception as e:
-        raise ClawdRelayError(f"codex via clawd-relay 调用失败：{type(e).__name__}: {str(e)[:200]}") from e
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(log_path):
+                os.remove(log_path)
+        except Exception:
+            pass
+
+        # Ensure artifact dir exists
+        try:
+            os.makedirs(os.path.dirname(log_path) or "/tmp", exist_ok=True)
+        except Exception:
+            pass
+
+        stderr_f = open(log_path, "wb")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=codex_cwd,
+                stdout=stderr_f,
+                stderr=stderr_f,
+            )
+            try:
+                deadline = time.time() + float(ASSISTANT_TIMEOUT_S)
+                tick_s = 0.8
+                while True:
+                    # Allow user to cancel while Codex is running.
+                    if _job_stop_requested(job_id):
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        raise RuntimeError("canceled by user")
+
+                    now = time.time()
+                    left = deadline - now
+                    if left <= 0:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        raise RuntimeError(f"codex 调用超时（{int(ASSISTANT_TIMEOUT_S)}s）")
+
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=min(tick_s, max(0.2, left)))
+                        break
+                    except asyncio.TimeoutError:
+                        continue
+            except Exception:
+                raise
+
+            # Race safety: if user cancels right before Codex exits, do not proceed.
+            if _job_stop_requested(job_id):
+                raise RuntimeError("canceled by user")
+
+            rc = int(getattr(proc, "returncode", 0) or 0)
+        finally:
+            try:
+                stderr_f.close()
+            except Exception:
+                pass
+
+        if rc != 0:
+            err_tail = ""
+            try:
+                with open(log_path, "rb") as f:
+                    b = f.read()[-16 * 1024 :]
+                err_tail = b.decode("utf-8", errors="replace").strip()
+            except Exception:
+                err_tail = ""
+            hint = (err_tail[-800:] if err_tail else "").strip()
+            raise RuntimeError(f"codex 执行失败（exit={rc}）：{hint or 'unknown error'}")
+
+        try:
+            with open(out_path, "r", encoding="utf-8", errors="replace") as f:
+                text = (f.read() or "").strip()
+            ok = True
+        except Exception as e:
+            raise RuntimeError(f"codex 输出读取失败：{type(e).__name__}") from e
+    finally:
+        # Best-effort cleanup
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except Exception:
+            pass
+        if ok:
+            try:
+                if os.path.exists(log_path):
+                    os.remove(log_path)
+            except Exception:
+                pass
     t1 = time.time()
 
-    stdout = str(res.get("stdout") or "")
-    text = stdout.strip()
     meta = {
         "source": "codex",
         "format": "md",
@@ -327,12 +570,51 @@ async def _assistant_generate_reply_via_codex(
             "cwd": codex_cwd,
             "sandbox": sandbox,
             "model": ASSISTANT_CODEX_MODEL or None,
-            "duration_ms": res.get("durationMs"),
-            "task_id": res.get("taskId") or res.get("requestId"),
+            "duration_ms": int(round((t1 - t0) * 1000)),
+            "task_id": None,
             "elapsed_s": round(float(t1 - t0), 3),
         },
     }
     return text, meta
+
+
+async def _assistant_generate_reply_via_openai(
+    *,
+    session: Session,
+    job: AssistantJob,
+    messages: list[dict[str, str]],
+) -> tuple[str, dict[str, Any]]:
+    """Generate assistant reply via OpenAI-compatible /v1/responses."""
+    AIError, chat_completion = _get_ai_client()
+
+    job_id = int(getattr(job, "id", 0) or 0)
+    attempt = int(getattr(job, "attempts", 0) or 0)
+
+    t0 = time.time()
+    try:
+        text = await chat_completion(
+            messages,
+            model=ASSISTANT_MODEL,
+            reasoning_effort=ASSISTANT_REASONING_EFFORT,
+            timeout_s=float(ASSISTANT_TIMEOUT_S),
+            retries=0,
+            request_id=f"assistantjob-{job_id}",
+            idempotency_key=f"assistantjob-{job_id}-attempt-{attempt}",
+            session=session,
+        )
+    except AIError:
+        raise
+    t1 = time.time()
+
+    meta = {
+        "source": "openai",
+        "format": "md",
+        "openai": {
+            "model": ASSISTANT_MODEL,
+            "duration_ms": int(round((t1 - t0) * 1000)),
+        },
+    }
+    return (text or "").strip(), meta
 
 
 def compact_thread_title(text: str, *, max_len: int = 28) -> str:
@@ -563,34 +845,89 @@ def claim_one_assistant_job(session: Session) -> AssistantJob | None:
     # Recovery: mark stale running jobs as error.
     try:
         stale_seconds = int(ASSISTANT_JOB_STALE_SECONDS)
-        cutoff = datetime.utcnow() - timedelta(seconds=max(60, stale_seconds))
+        now = datetime.utcnow()
+        hard_cutoff = now - timedelta(seconds=max(60, stale_seconds))
+
+        # Heartbeat-based recovery is intentionally more aggressive than hard_cutoff:
+        # if a worker restarts mid-flight, the job stays "running" and blocks the UI.
+        # Heartbeat should update every ~10s; if it's silent for ~90s, we can safely recover.
+        hb_seconds = 90
+        try:
+            hb_seconds = int((os.getenv("ASSISTANT_HEARTBEAT_STALE_SECONDS") or "90").strip())
+        except Exception:
+            hb_seconds = 90
+        hb_seconds = max(30, min(600, hb_seconds))
+        hb_cutoff = now - timedelta(seconds=hb_seconds)
+
+        # Candidate set: running jobs old enough that they should have a heartbeat.
         stuck = session.exec(
             select(AssistantJob)
             .where(AssistantJob.status == "running")
             .where(AssistantJob.started_at.is_not(None))
-            .where(AssistantJob.started_at < cutoff)
+            .where(AssistantJob.started_at < hb_cutoff)
         ).all()
-        # Some historical rows may incorrectly be "running" but missing started_at/attempts,
-        # which would bypass the recovery above and cause the UI to look permanently stuck.
         stuck_no_started = session.exec(
             select(AssistantJob)
             .where(AssistantJob.status == "running")
             .where(AssistantJob.started_at.is_(None))
-            .where(AssistantJob.created_at < cutoff)
+            .where(AssistantJob.created_at < hb_cutoff)
         ).all()
         if stuck_no_started:
             stuck = list(stuck or []) + list(stuck_no_started or [])
         if stuck:
             for j in stuck:
+                hb = _job_heartbeat_dt(j)
+                started_at = getattr(j, "started_at", None)
+                created_at = getattr(j, "created_at", None)
+
+                # Hard timeout: even with heartbeat, we should not keep a job running forever.
+                if started_at is not None and started_at < hard_cutoff:
+                    pass
+                elif started_at is None and created_at is not None and created_at < hard_cutoff:
+                    pass
+                else:
+                    # Multi-worker safety: only recover "running" when heartbeat is missing/stale.
+                    if hb and hb >= hb_cutoff:
+                        continue
+
                 j.status = "error"  # type: ignore
                 j.finished_at = datetime.utcnow()
                 if getattr(j, "started_at", None) is None:
                     j.last_error = "任务异常恢复：运行中但缺少 started_at（可能 worker 重启或旧版本遗留）。已自动终止，请重试。"
                 else:
-                    mins = max(1, int(round(float(stale_seconds) / 60.0)))
-                    j.last_error = f"任务超时自动恢复：已运行超过 {mins} 分钟仍未返回（可能 worker 重启或上游 AI 卡住）。已自动终止，请重试。"
+                    # Prefer heartbeat wording (more accurate) unless it truly exceeded hard timeout.
+                    if getattr(j, "started_at", None) is not None and getattr(j, "started_at", None) < hard_cutoff:
+                        mins = max(1, int(round(float(stale_seconds) / 60.0)))
+                        j.last_error = f"任务超时自动恢复：已运行超过 {mins} 分钟仍未返回（可能 worker 重启或上游 AI 卡住）。已自动终止，请重试。"
+                    else:
+                        j.last_error = f"任务异常恢复：超过 {hb_seconds} 秒未收到 worker 心跳（可能 worker 重启或崩溃）。已自动终止，请重试。"
                 session.add(j)
             session.commit()
+            # Make the failure visible in the chat history.
+            for j in stuck:
+                try:
+                    if _job_status_str(j) == "error":
+                        _ensure_assistant_job_error_message(session, j, getattr(j, "last_error", "") or "")
+                except Exception:
+                    pass
+
+        # Backfill: historical error rows may have no visible assistant message,
+        # which makes the UI look like "nothing happened" after refresh.
+        try:
+            missing_err_msgs = session.exec(
+                select(AssistantJob)
+                .where(AssistantJob.status == "error")
+                .where(AssistantJob.assistant_message_id.is_(None))
+                .where(AssistantJob.finished_at.is_not(None))
+                .order_by(AssistantJob.finished_at.desc(), AssistantJob.id.desc())
+                .limit(20)
+            ).all()
+            for j in (missing_err_msgs or []):
+                if not (getattr(j, "last_error", None) or "").strip():
+                    continue
+                _ensure_assistant_job_error_message(session, j, getattr(j, "last_error", "") or "")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -610,6 +947,12 @@ def claim_one_assistant_job(session: Session) -> AssistantJob | None:
     job.status = "running"  # type: ignore
     job.started_at = datetime.utcnow()
     job.attempts = (job.attempts or 0) + 1
+    try:
+        extra = dict(job.extra or {}) if isinstance(job.extra, dict) else {}
+        extra["heartbeat_at"] = _utc_iso_z()
+        job.extra = extra
+    except Exception:
+        pass
     session.add(job)
     session.commit()
     session.refresh(job)
@@ -664,6 +1007,8 @@ def mark_assistant_job_error(session: Session, job: AssistantJob, err: str) -> N
     j.last_error = (err or "")[:2000]
     session.add(j)
     session.commit()
+    # Always leave a visible trace for the user (refresh/close shouldn't lose it).
+    _ensure_assistant_job_error_message(session, j, j.last_error or "")
 
 
 async def generate_assistant_reply(session: Session, *, job: AssistantJob) -> int:
@@ -715,12 +1060,17 @@ async def generate_assistant_reply(session: Session, *, job: AssistantJob) -> in
             msgs.append({"role": role, "content": content})
         return msgs
 
-    # Always generate via local Codex (via clawd-relay). No upstream LLM fallback.
-    codex_system_prompt = build_codex_system_prompt(user=user)
-    codex_messages = _build_messages(codex_system_prompt)
-    text, codex_meta = await _assistant_generate_reply_via_codex(session=session, job=job, messages=codex_messages)
+    upstream = (ASSISTANT_UPSTREAM or "openai").strip().lower()
+    if upstream == "codex":
+        system_prompt = build_codex_system_prompt(user=user)
+        msgs = _build_messages(system_prompt)
+        text, meta0 = await _assistant_generate_reply_via_codex(session=session, job=job, messages=msgs)
+    else:
+        system_prompt = build_system_prompt(session, user=user, question_hint=question_hint)
+        msgs = _build_messages(system_prompt)
+        text, meta0 = await _assistant_generate_reply_via_openai(session=session, job=job, messages=msgs)
     if not (text or "").strip():
-        raise RuntimeError("codex 返回为空")
+        raise RuntimeError("assistant 返回为空")
 
     # Check cancellation again right before persisting (avoid late answers after user cancels).
     fresh2 = None
@@ -734,7 +1084,8 @@ async def generate_assistant_reply(session: Session, *, job: AssistantJob) -> in
 
     # Best-effort performance trace
     try:
-        job.extra = {**(job.extra or {}), "codex": (codex_meta or {}).get("codex")}
+        if isinstance(meta0, dict) and meta0.get("source") == "codex":
+            job.extra = {**(job.extra or {}), "codex": (meta0 or {}).get("codex")}
         session.add(job)
         session.commit()
     except Exception:
@@ -744,7 +1095,7 @@ async def generate_assistant_reply(session: Session, *, job: AssistantJob) -> in
             pass
 
     cleaned, charts = _extract_charts(text)
-    meta: dict[str, Any] = {**(codex_meta or {}), "reasoning_effort": ASSISTANT_REASONING_EFFORT}
+    meta: dict[str, Any] = {**(meta0 or {}), "reasoning_effort": ASSISTANT_REASONING_EFFORT}
     if charts:
         meta["charts"] = charts[:3]
 

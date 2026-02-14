@@ -681,21 +681,43 @@
   <div class="tag-reason-popover-arrow" aria-hidden="true"></div>
 </div>
 
-<script>
-  (function () {
-    var USER_ID = {{ user.id }};
-    var stateKey = "conversations_filters_" + USER_ID;
+	<script>
+	  (function () {
+	    var USER_ID = {{ user.id }};
+	    var stateKey = "conversations_filters_" + USER_ID;
 
-    // If user opens `/conversations` with no query, default to their last applied filters.
-    try {
-      if (!window.location.search) {
-        var saved = (localStorage.getItem(stateKey) || "").trim();
-        if (saved) {
-          window.location.replace("/conversations?" + saved);
-          return;
-        }
-      }
-    } catch (e) {}
+	    function stripTimeParams(p) {
+	      try { p.delete("time_mode"); } catch (e) {}
+	      try { p.delete("start"); } catch (e) {}
+	      try { p.delete("end"); } catch (e) {}
+	      return p;
+	    }
+
+	    function normalizePersistedQuery(raw) {
+	      var p = new URLSearchParams((raw || "").trim());
+	      p.delete("page");
+	      stripTimeParams(p);
+	      return p.toString();
+	    }
+
+	    // If user opens `/conversations` with no query, default to their last applied filters
+	    // (except time filters, which always reset to default "日/昨天").
+	    try {
+	      if (!window.location.search) {
+	        var savedRaw = (localStorage.getItem(stateKey) || "").trim();
+	        var saved = normalizePersistedQuery(savedRaw);
+	        try {
+	          if (savedRaw && saved !== savedRaw) {
+	            if (saved) localStorage.setItem(stateKey, saved);
+	            else localStorage.removeItem(stateKey);
+	          }
+	        } catch (e) {}
+	        if (saved) {
+	          window.location.replace("/conversations?" + saved);
+	          return;
+	        }
+	      }
+	    } catch (e) {}
 
     function getBoxes(group, category, root) {
       var selector = 'input[type="checkbox"][data-group="' + group + '"]';
@@ -1078,15 +1100,14 @@
       if (daySelect && selection.day) daySelect.value = selection.day;
     }
 
-    function setTimeAnchorsForSubmit(params) {
-      var mode = (document.getElementById("time-mode") || {}).value || "all";
-      if (mode === "all") return;
+	    function setTimeAnchorsForSubmit(params) {
+	      var mode = (document.getElementById("time-mode") || {}).value || "all";
+	      params.append("time_mode", mode);
+	      if (mode === "all") return;
 
-      params.append("time_mode", mode);
-
-      if (mode === "custom") {
-        var s = (document.getElementById("start-date") || {}).value || "";
-        var e = (document.getElementById("end-date") || {}).value || "";
+	      if (mode === "custom") {
+	        var s = (document.getElementById("start-date") || {}).value || "";
+	        var e = (document.getElementById("end-date") || {}).value || "";
         if (s) params.append("start", s);
         if (e) params.append("end", e);
         return;
@@ -1167,14 +1188,15 @@
       return params;
     }
 
-    function saveCurrentFiltersFromUrl() {
-      try {
-        var p = new URLSearchParams(window.location.search);
-        p.delete("page");
-        var qs = p.toString();
-        if (!qs) {
-          localStorage.removeItem(stateKey);
-        } else {
+	    function saveCurrentFiltersFromUrl() {
+	      try {
+	        var p = new URLSearchParams(window.location.search);
+	        p.delete("page");
+	        stripTimeParams(p);
+	        var qs = p.toString();
+	        if (!qs) {
+	          localStorage.removeItem(stateKey);
+	        } else {
           localStorage.setItem(stateKey, qs);
         }
       } catch (e) {}
@@ -1207,18 +1229,21 @@
       }
     }
 
-    var formEl = document.getElementById("conversations-filters");
-    if (formEl) {
-      formEl.addEventListener("submit", function (event) {
-        event.preventDefault();
-        var params = buildFiltersQuery();
-        var qs = params.toString();
-        try {
-          if (qs) localStorage.setItem(stateKey, qs);
-          else localStorage.removeItem(stateKey);
-        } catch (e) {}
-        window.location.href = "/conversations" + (qs ? ("?" + qs) : "");
-      });
+	    var formEl = document.getElementById("conversations-filters");
+	    if (formEl) {
+	      formEl.addEventListener("submit", function (event) {
+	        event.preventDefault();
+	        var params = buildFiltersQuery();
+	        var qs = params.toString();
+	        var persistParams = new URLSearchParams(qs);
+	        stripTimeParams(persistParams);
+	        var persistQs = persistParams.toString();
+	        try {
+	          if (persistQs) localStorage.setItem(stateKey, persistQs);
+	          else localStorage.removeItem(stateKey);
+	        } catch (e) {}
+	        window.location.href = "/conversations" + (qs ? ("?" + qs) : "");
+	      });
     }
 
     saveCurrentFiltersFromUrl();

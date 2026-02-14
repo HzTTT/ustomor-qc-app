@@ -56,8 +56,84 @@ def seed_if_needed(session: Session) -> None:
     if not seed_demo:
         return
 
-    existing = session.exec(select(User)).first()
-    if existing:
+    def _get_user(username: str) -> User | None:
+        return session.exec(select(User).where(User.username == username)).first()
+
+    def _ensure_demo_user(username: str, *, email: str, name: str, role: Role, password: str) -> User:
+        """Create demo users when missing.
+
+        This is intentionally non-destructive: it won't reset passwords for existing rows.
+        """
+        u = _get_user(username)
+        if u:
+            # Keep existing password_hash as-is.
+            if u.role != role:
+                u.role = role
+                session.add(u)
+                session.commit()
+            return u
+        u = User(
+            username=username,
+            email=email,
+            name=name,
+            role=role,
+            password_hash=hash_password(password),
+        )
+        session.add(u)
+        session.commit()
+        return u
+
+    existing_any = session.exec(select(User)).first()
+    if existing_any:
+        # DB already initialized (e.g. ensure_default_admin created Sean).
+        # Still seed demo agent accounts so UI smoke scripts and read-only mode work out of the box.
+        sup = _ensure_demo_user(
+            "supervisor",
+            email="supervisor@example.com",
+            name="Supervisor",
+            role=Role.supervisor,
+            password="supervisor123",
+        )
+        a1 = _ensure_demo_user(
+            "agent1",
+            email="agent1@example.com",
+            name="Agent A",
+            role=Role.agent,
+            password="agent123",
+        )
+        a2 = _ensure_demo_user(
+            "agent2",
+            email="agent2@example.com",
+            name="Agent B",
+            role=Role.agent,
+            password="agent123",
+        )
+
+        # 预置绑定（不重复插入）
+        creator = session.exec(select(User).where(User.role == Role.admin).order_by(User.id.asc())).first()
+        creator_id = int(getattr(creator, "id", 0) or 0) if creator else 0
+        if creator_id:
+            for agent_account, uid in [("客服001", a1.id), ("客服002", a2.id)]:
+                if not uid:
+                    continue
+                exists_bind = session.exec(
+                    select(AgentBinding).where(
+                        AgentBinding.platform == "taobao",
+                        AgentBinding.agent_account == agent_account,
+                        AgentBinding.user_id == uid,
+                    )
+                ).first()
+                if exists_bind:
+                    continue
+                session.add(
+                    AgentBinding(
+                        platform="taobao",
+                        agent_account=agent_account,
+                        user_id=uid,
+                        created_by_user_id=creator_id,
+                    )
+                )
+            session.commit()
         return
 
     admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com")

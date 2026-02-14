@@ -60,20 +60,17 @@ async function run() {
 
     // Ensure no in-flight assistant job forces auto-open (refresh-wait behavior).
     try {
-      const pending = await page.evaluate(async () => {
-        const resp = await fetch("/api/marllen-assistant/thread?limit=1", { credentials: "same-origin" });
-        const json = await resp.json().catch(() => ({}));
-        return json && json.pending_job ? json.pending_job : null;
-      });
-      if (pending && pending.id && pending.status && pending.status !== "done" && pending.status !== "error") {
-        await page.evaluate(async (jobId) => {
-          await fetch("/api/marllen-assistant/jobs/" + String(jobId) + "/cancel", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: "{}",
-          });
-        }, pending.id);
+      const deadline = Date.now() + 45000;
+      // Wait for any in-flight job to finish instead of force-canceling it.
+      while (Date.now() < deadline) {
+        const pending = await page.evaluate(async () => {
+          const resp = await fetch("/api/marllen-assistant/thread?limit=1", { credentials: "same-origin" });
+          const json = await resp.json().catch(() => ({}));
+          return json && json.pending_job ? json.pending_job : null;
+        });
+        const st = pending && pending.status ? String(pending.status) : "";
+        if (!pending || !pending.id || !st || st === "done" || st === "error") break;
+        await page.waitForTimeout(1500);
       }
     } catch (e) {}
 

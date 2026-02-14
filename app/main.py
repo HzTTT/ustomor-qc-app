@@ -4,7 +4,7 @@ import json
 import os
 import io
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import secrets
 from urllib.parse import quote
@@ -77,6 +77,7 @@ from marllen_assistant import (
     ASSISTANT_NAME as MARLLEN_ASSISTANT_NAME,
     activate_thread as activate_marllen_thread,
     archive_and_create_new_thread,
+    assistant_codex_paths,
     get_or_create_active_thread,
     get_pending_job as get_marllen_pending_job,
     list_threads as list_marllen_threads,
@@ -141,6 +142,50 @@ def _sanitize_next(next_url: str | None) -> str | None:
     if s.startswith("//"):
         return None
     return s
+
+
+def _cookie_domain_for_request(request: Request) -> str | None:
+    """Best-effort cookie domain:
+    - If COOKIE_DOMAIN is configured, use it.
+    - Else if host looks like a real domain (not localhost/IP), set it to the
+      base host (drop leading www.) so cookies work across www/non-www.
+    """
+    cfg = (getattr(auth_settings, "COOKIE_DOMAIN", "") or "").strip()
+    if cfg:
+        return cfg
+    host = (getattr(request.url, "hostname", None) or "").strip().lower()
+    if not host or host == "localhost" or "." not in host:
+        return None
+    # Don't attempt domain cookies on IP hosts.
+    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", host or ""):
+        return None
+    if ":" in host:  # ipv6
+        return None
+    if host.startswith("www.") and len(host) > 4:
+        return host[4:]
+    return host
+
+
+def _cookie_kwargs(request: Request) -> dict:
+    samesite = (getattr(auth_settings, "COOKIE_SAMESITE", "lax") or "lax").strip().lower()
+    if samesite not in {"lax", "strict", "none"}:
+        samesite = "lax"
+
+    secure = bool(getattr(auth_settings, "COOKIE_SECURE", False))
+    # Browsers reject SameSite=None cookies without Secure.
+    if samesite == "none":
+        secure = True
+
+    kw = dict(
+        httponly=True,
+        samesite=samesite,
+        secure=secure,
+        path="/",
+    )
+    dom = _cookie_domain_for_request(request)
+    if dom:
+        kw["domain"] = dom
+    return kw
 
 
 @app.exception_handler(HTTPException)
@@ -217,14 +262,10 @@ def login_action(
     token = create_token(user, expire_hours=expire_hours)
     target = _sanitize_next(next) or _sanitize_next(request.query_params.get("next")) or "/conversations"
     resp = _redirect(target)
-    cookie_kwargs = dict(
-        httponly=True,
-        samesite="lax",
-        secure=bool(getattr(auth_settings, "COOKIE_SECURE", False)),
-    )
+    cookie_kwargs = _cookie_kwargs(request)
     if remember_on and expire_hours:
         max_age = int(expire_hours * 3600)
-        cookie_kwargs.update(max_age=max_age, expires=max_age)
+        cookie_kwargs.update(max_age=max_age, expires=(datetime.now(timezone.utc) + timedelta(seconds=max_age)))
     resp.set_cookie(auth_settings.COOKIE_NAME, token, **cookie_kwargs)
 
 
@@ -245,9 +286,13 @@ def login_action(
 
 
 @app.get("/logout")
-def logout():
+def logout(request: Request):
     resp = _redirect("/login")
-    resp.delete_cookie(auth_settings.COOKIE_NAME)
+    # Delete both host-only and domain cookies (if any).
+    resp.delete_cookie(auth_settings.COOKIE_NAME, path="/")
+    dom = _cookie_domain_for_request(request)
+    if dom:
+        resp.delete_cookie(auth_settings.COOKIE_NAME, path="/", domain=dom)
     return resp
 
 
@@ -302,11 +347,9 @@ def register_action(
     resp.set_cookie(
         auth_settings.COOKIE_NAME,
         token,
-        httponly=True,
-        samesite="lax",
-        secure=bool(getattr(auth_settings, "COOKIE_SECURE", False)),
+        **_cookie_kwargs(request),
         max_age=max_age,
-        expires=max_age,
+        expires=(datetime.now(timezone.utc) + timedelta(seconds=max_age)),
     )
     return resp
 
@@ -2950,8 +2993,9 @@ def conversations_list(
     end_norm = (end or "").strip()
 
     # Backward compatible: old URLs only had start/end.
+    # Product default: always land on "日" (yesterday) unless user explicitly sets a mode.
     if not time_mode_norm:
-        time_mode_norm = "custom" if (start_norm or end_norm) else "all"
+        time_mode_norm = "custom" if (start_norm or end_norm) else "yesterday"
 
     # Prevent "custom" with empty dates from implicitly becoming last 7 days.
     if time_mode_norm == "custom" and not (start_norm or end_norm):
@@ -3500,7 +3544,8 @@ def _build_conversations_base_qs(
     if match:
         from urllib.parse import quote_plus
         parts.append(f"match={quote_plus(match)}")
-    if time_mode and time_mode != "all":
+    # NOTE: server default time mode is "yesterday"; keep explicit mode in pagination links.
+    if time_mode:
         parts.append(f"time_mode={time_mode}")
     if start:
         parts.append(f"start={start}")
@@ -4584,6 +4629,30 @@ def marllen_assistant_job_api(
     if getattr(job, "assistant_message_id", None):
         assistant_msg = session.get(AssistantMessage, int(job.assistant_message_id))
 
+    # Best-effort real-time Codex execution log (tail).
+    exec_log = {"tail": "", "truncated": False, "bytes": 0}
+    try:
+        import os as _os
+
+        attempt = int(getattr(job, "attempts", 0) or 0)
+        _, log_path = assistant_codex_paths(job_id=int(job.id or 0), attempt=attempt)
+        max_bytes = 24 * 1024
+        if log_path and _os.path.exists(log_path):
+            size = int(_os.path.getsize(log_path) or 0)
+            with open(log_path, "rb") as f:
+                if size > max_bytes:
+                    f.seek(size - max_bytes)
+                b = f.read() or b""
+            s = b.decode("utf-8", errors="replace")
+            if size > max_bytes:
+                # Drop partial first line (tail may start mid-line).
+                i = s.find("\n")
+                if i >= 0:
+                    s = s[i + 1 :]
+            exec_log = {"tail": s.strip(), "truncated": bool(size > max_bytes), "bytes": size}
+    except Exception:
+        exec_log = {"tail": "", "truncated": False, "bytes": 0}
+
     return {
         "job": {
             "id": int(job.id or 0),
@@ -4594,6 +4663,7 @@ def marllen_assistant_job_api(
             "finished_at": _fmt_dt_iso(job.finished_at),
             "attempts": int(getattr(job, "attempts", 0) or 0),
             "last_error": (job.last_error or "")[:2000],
+            "exec": exec_log,
         },
         "assistant_message": (
             _assistant_message_out(assistant_msg)
@@ -4609,10 +4679,6 @@ def marllen_assistant_job_cancel_api(
     user: User = Depends(require_role("admin", "supervisor", "agent")),
     session: Session = Depends(get_session),
 ):
-    """Force-stop a stuck assistant job so the UI can recover.
-
-    We reuse the existing JobStatus ("error") to avoid schema changes.
-    """
     uid = int(user.id or 0)
     job = session.get(AssistantJob, int(job_id))
     if not job:
@@ -4622,32 +4688,37 @@ def marllen_assistant_job_cancel_api(
     if not t or int(getattr(t, "owner_user_id", 0) or 0) != uid:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    st = _status_val(job.status)
-    if st not in ("done", "error"):
-        job.status = "error"  # type: ignore
-        job.finished_at = datetime.utcnow()
-        job.last_error = "canceled by user"
-        try:
-            job.extra = {**(job.extra or {}), "canceled": 1, "canceled_at": datetime.utcnow().isoformat(), "canceled_by_user_id": uid}
-        except Exception:
-            pass
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+    st = _status_val(getattr(job, "status", None)).strip().lower()
+    if st in ("done", "error"):
+        return {"ok": True, "job_id": int(job.id or 0), "status": st}
 
-    return {
-        "job": {
-            "id": int(job.id or 0),
-            "thread_id": int(job.thread_id or 0),
-            "status": _status_val(job.status),
-            "created_at": _fmt_dt_iso(job.created_at),
-            "started_at": _fmt_dt_iso(job.started_at),
-            "finished_at": _fmt_dt_iso(job.finished_at),
-            "attempts": int(getattr(job, "attempts", 0) or 0),
-            "last_error": (job.last_error or "")[:2000],
-        }
-    }
+    now = datetime.utcnow()
 
+    # 1) Make the cancellation visible in the thread immediately (UX: don't look "stuck").
+    msg = AssistantMessage(
+        thread_id=int(job.thread_id or 0),
+        role="assistant",
+        content="好的，我先帮你终止这次生成。你可以直接再发一个新的问题。",
+        meta={"type": "job_canceled", "job_id": int(job.id or 0)},
+    )
+    session.add(msg)
+    try:
+        t.updated_at = now
+        session.add(t)
+    except Exception:
+        pass
+    session.commit()
+    session.refresh(msg)
+
+    # 2) Mark job as finished so the UI can proceed and the worker will stop early.
+    job.status = "done"  # type: ignore
+    job.finished_at = now
+    job.last_error = "canceled by user"
+    job.assistant_message_id = int(msg.id or 0)  # type: ignore
+    session.add(job)
+    session.commit()
+
+    return {"ok": True, "job_id": int(job.id or 0), "status": "done"}
 
 @app.get("/conversations/{conversation_id}/export", response_class=HTMLResponse)
 def conversation_export_page(
@@ -5745,7 +5816,9 @@ def _build_tag_report_period(
     mode = (time_mode or "last_week").strip() or "last_week"
     start_dt = _tag_report_parse_date(start)
     end_dt = _tag_report_parse_date(end)
-    now = datetime.utcnow()
+    # We treat the product's "daily" as Shanghai business date (UTC+8).
+    # Most timestamps in this app are stored/rendered as Shanghai-naive datetimes.
+    now = datetime.utcnow() + timedelta(hours=8)
     today = datetime(now.year, now.month, now.day)
 
     def _date_str(d: datetime | None) -> str:
@@ -5979,12 +6052,50 @@ def tags_report_page(
             if (p[0] if isinstance(p, (list, tuple)) else p)
         }
     )
+
+    # 平台 label（与聊天记录列表一致，便于用户理解）
+    platform_labels = {
+        "taobao": "淘宝",
+        "douyin": "抖音",
+        "unknown": "未知",
+    }
+
     users = session.exec(select(User).order_by(User.role.asc(), User.name.asc())).all()
     agent_options = [
         {"id": u.id, "label": f"{u.name}（{u.role}）"}
         for u in users
         if u.role in (Role.agent, Role.supervisor) and getattr(u, "is_active", True)
     ]
+
+    # 站外客服账号下拉选项：来自消息里的 agent_account + 对话主字段 agent_account
+    ext_accounts: set[str] = set()
+    try:
+        rows_acc = session.exec(
+            select(Message.agent_account)
+            .where(Message.sender == "agent", Message.agent_account.is_not(None), Message.agent_account != "")
+            .distinct()
+        ).all()
+        for r in (rows_acc or []):
+            v = r[0] if isinstance(r, tuple) else r
+            v = str(v or "").strip()
+            if v:
+                ext_accounts.add(v)
+    except Exception:
+        pass
+    try:
+        rows_conv_acc = session.exec(
+            select(Conversation.agent_account)
+            .where(Conversation.agent_account.is_not(None), Conversation.agent_account != "")
+            .distinct()
+        ).all()
+        for r in (rows_conv_acc or []):
+            v = r[0] if isinstance(r, tuple) else r
+            v = str(v or "").strip()
+            if v:
+                ext_accounts.add(v)
+    except Exception:
+        pass
+    external_agent_accounts = sorted(ext_accounts)
 
     cats = session.exec(
         select(TagCategory)
@@ -6066,6 +6177,8 @@ def tags_report_page(
         tag_meta=tag_meta,
         category_meta=category_meta,
         user_meta=user_meta,
+        platform_labels=platform_labels,
+        external_agent_accounts=external_agent_accounts,
     )
 
 
@@ -6078,9 +6191,17 @@ def tags_report_pivot_data(
     start: str | None = None,
     end: str | None = None,
     platform: str | None = None,
-    agent_user_id: str | None = None,
-    reception_scenario: str | None = None,
-    satisfaction_change: str | None = None,
+    agent_user_id: list[str] | None = Query(None),
+    ext_agent_account: list[str] | None = Query(None),
+    match: str | None = None,
+    cid: str | None = None,
+    min_rounds: str | None = None,
+    max_rounds: str | None = None,
+    only_flagged: str | None = None,
+    has_analysis: str | None = None,
+    tag_id: list[str] | None = Query(None),
+    reception_scenario: list[str] | None = Query(None),
+    satisfaction_change: list[str] | None = Query(None),
     yoy: int | None = None,
 ):
     """标签报表数据透视表数据源。"""
@@ -6089,16 +6210,58 @@ def tags_report_pivot_data(
     period = _build_tag_report_period(time_mode, start, end, bool(yoy))
 
     platform_f = (platform or "").strip()
-    scenario_f = (reception_scenario or "").strip()
-    satisfaction_f = (satisfaction_change or "").strip()
-    agent_user_id_int = None
-    try:
-        agent_user_id_int = int(agent_user_id) if agent_user_id else None
-    except Exception:
-        agent_user_id_int = None
+    match_norm = (match or "").strip()
+    cid_norm = (cid or "").strip()
+    only_flagged_bool = (only_flagged == "1")
+    has_analysis_norm = (has_analysis or "").strip()
+    ext_agent_account_norms = [str(v or "").strip() for v in (ext_agent_account or []) if str(v or "").strip()]
+    reception_scenario_norms = [str(v or "").strip() for v in (reception_scenario or []) if str(v or "").strip()]
+    satisfaction_change_norms = [str(v or "").strip() for v in (satisfaction_change or []) if str(v or "").strip()]
 
+    def _parse_int_list(values: list[str] | None) -> list[int]:
+        out: list[int] = []
+        for v in values or []:
+            s = str(v or "").strip()
+            if not s:
+                continue
+            try:
+                out.append(int(s))
+            except Exception:
+                continue
+        return out
+
+    agent_user_ids = _parse_int_list(agent_user_id)
     if user.role == Role.agent:
-        agent_user_id_int = user.id
+        agent_user_ids = [user.id]
+
+    # Has analysis: 本报表默认就是“已质检（最新一条分析）”口径；如果用户强制筛“未质检”，直接返回空。
+    if has_analysis_norm == "0":
+        def _d(d: datetime | None) -> str:
+            return d.date().isoformat() if d else ""
+
+        cur_end = period["cur_end_excl"] - timedelta(days=1) if period["cur_end_excl"] else None
+        prev_end = period["prev_end_excl"] - timedelta(days=1) if period["prev_end_excl"] else None
+        yoy_end = period["yoy_end_excl"] - timedelta(days=1) if period["yoy_end_excl"] else None
+        return {
+            "mode": period["mode"],
+            "period": {
+                "current_label": period["cur_label"],
+                "prev_label": period["prev_label"],
+                "yoy_label": period["yoy_label"],
+            },
+            "range": {
+                "current_start": _d(period["cur_start"]),
+                "current_end": _d(cur_end),
+                "prev_start": _d(period["prev_start"]),
+                "prev_end": _d(prev_end),
+                "yoy_start": _d(period["yoy_start"]),
+                "yoy_end": _d(yoy_end),
+            },
+            "tag_hits": [],
+            "totals": [],
+            "tagged_totals": [],
+            "tagged_category_totals": [],
+        }
 
     latest_subq = (
         select(func.max(ConversationAnalysis.id).label("analysis_id"))
@@ -6108,6 +6271,52 @@ def tags_report_pivot_data(
     binding_user_id = func.coalesce(AgentBinding.user_id, Conversation.agent_user_id)
     conv_date = func.coalesce(Conversation.ended_at, Conversation.started_at, Conversation.uploaded_at)
 
+    # rounds (non-system message count) range filter
+    def _parse_nonneg_int(s: str | None) -> int | None:
+        s = str(s or "").strip()
+        if not s:
+            return None
+        try:
+            v = int(float(s))
+        except Exception:
+            return None
+        return max(0, v)
+
+    min_rounds_i = _parse_nonneg_int(min_rounds)
+    max_rounds_i = _parse_nonneg_int(max_rounds)
+    if min_rounds_i is not None and max_rounds_i is not None and max_rounds_i < min_rounds_i:
+        min_rounds_i, max_rounds_i = max_rounds_i, min_rounds_i
+
+    msg_cnt_sq = None
+    rounds_expr = None
+    if min_rounds_i is not None or max_rounds_i is not None:
+        msg_cnt_sq = (
+            select(
+                Message.conversation_id.label("cid"),
+                func.count(Message.id).label("msg_cnt"),
+            )
+            .where(Message.sender != "system")
+            .group_by(Message.conversation_id)
+        ).subquery()
+        rounds_expr = func.coalesce(msg_cnt_sq.c.msg_cnt, 0)
+
+    tag_ids: list[int] = []
+    for s in (tag_id or []):
+        try:
+            v = int(str(s or "").strip())
+        except Exception:
+            continue
+        if v > 0:
+            tag_ids.append(v)
+    tag_ids = sorted(set(tag_ids))
+
+    cid_int: int | None = None
+    if cid_norm:
+        try:
+            cid_int = int(cid_norm)
+        except Exception:
+            cid_int = None
+
     def _apply_filters(stmt, start_dt, end_excl):
         if start_dt:
             stmt = stmt.where(conv_date >= start_dt)
@@ -6115,12 +6324,62 @@ def tags_report_pivot_data(
             stmt = stmt.where(conv_date < end_excl)
         if platform_f:
             stmt = stmt.where(Conversation.platform == platform_f)
-        if agent_user_id_int:
-            stmt = stmt.where(binding_user_id == agent_user_id_int)
-        if scenario_f:
-            stmt = stmt.where(ConversationAnalysis.reception_scenario == scenario_f)
-        if satisfaction_f:
-            stmt = stmt.where(ConversationAnalysis.satisfaction_change == satisfaction_f)
+        if agent_user_ids:
+            stmt = stmt.where(binding_user_id.in_(agent_user_ids))
+        if reception_scenario_norms:
+            stmt = stmt.where(ConversationAnalysis.reception_scenario.in_(reception_scenario_norms))
+        if satisfaction_change_norms:
+            stmt = stmt.where(ConversationAnalysis.satisfaction_change.in_(satisfaction_change_norms))
+        if only_flagged_bool:
+            stmt = stmt.where(ConversationAnalysis.flag_for_review == True)
+        if cid_int is not None:
+            stmt = stmt.where(Conversation.id == cid_int)
+        if ext_agent_account_norms:
+            stmt = stmt.where(
+                or_(
+                    Conversation.agent_account.in_(ext_agent_account_norms),
+                    exists(
+                        select(1)
+                        .select_from(Message)
+                        .where(
+                            Message.conversation_id == Conversation.id,
+                            Message.sender == "agent",
+                            Message.agent_account.in_(ext_agent_account_norms),
+                        )
+                    ),
+                )
+            )
+        if match_norm:
+            like = f"%{match_norm}%"
+            stmt = stmt.where(
+                exists(
+                    select(1)
+                    .select_from(Message)
+                    .where(
+                        Message.conversation_id == Conversation.id,
+                        Message.sender != "system",
+                        Message.text.ilike(like),
+                    )
+                )
+            )
+        if tag_ids:
+            # 语义：把对话集合限制为“命中任意这些标签”的对话，然后再做聚合（会出现共现标签）。
+            stmt = stmt.where(
+                exists(
+                    select(1)
+                    .select_from(ConversationTagHit)
+                    .where(
+                        ConversationTagHit.analysis_id == ConversationAnalysis.id,
+                        ConversationTagHit.tag_id.in_(tag_ids),
+                    )
+                )
+            )
+        if msg_cnt_sq is not None and rounds_expr is not None:
+            stmt = stmt.outerjoin(msg_cnt_sq, msg_cnt_sq.c.cid == Conversation.id)
+            if min_rounds_i is not None:
+                stmt = stmt.where(rounds_expr >= min_rounds_i)
+            if max_rounds_i is not None:
+                stmt = stmt.where(rounds_expr <= max_rounds_i)
         return stmt
 
     tag_base_stmt = (
@@ -6401,21 +6660,29 @@ def get_tag_conversations(
     request: Request,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
-    tag_id: int | None = None,
-    category_id: int | None = None,
+    hit_tag_id: int | None = None,
+    hit_category_id: int | None = None,
     start: str | None = None,
     end: str | None = None,
     platform: str | None = None,
-    agent_user_id: str | None = None,
-    reception_scenario: str | None = None,
-    satisfaction_change: str | None = None,
+    agent_user_id: list[str] | None = Query(None),
+    ext_agent_account: list[str] | None = Query(None),
+    match: str | None = None,
+    cid: str | None = None,
+    min_rounds: str | None = None,
+    max_rounds: str | None = None,
+    only_flagged: str | None = None,
+    has_analysis: str | None = None,
+    tag_id: list[str] | None = Query(None),
+    reception_scenario: list[str] | None = Query(None),
+    satisfaction_change: list[str] | None = Query(None),
     page: int | None = 1,
     per_page: int | None = 20,
 ):
     """标签报表：打开“对应对话列表”（只看每个对话的最新质检）。
 
-    - tag_id: 只看命中该标签的对话
-    - category_id: 只看命中该标签分类下任一标签的对话
+    - hit_tag_id: 只看命中该标签的对话
+    - hit_category_id: 只看命中该标签分类下任一标签的对话
     - 两者都不传：只看当前筛选条件下的“已质检对话”（最新质检）
     """
     from sqlalchemy import func
@@ -6438,19 +6705,68 @@ def get_tag_conversations(
         end_dt = end_dt + timedelta(days=1)  # Make it exclusive
 
     platform_f = (platform or "").strip()
-    scenario_f = (reception_scenario or "").strip()
-    satisfaction_f = (satisfaction_change or "").strip()
-    tag_id_i = int(tag_id or 0) or None
-    category_id_i = int(category_id or 0) or None
-    agent_user_id_int = None
-    try:
-        agent_user_id_int = int(agent_user_id) if agent_user_id else None
-    except Exception:
-        agent_user_id_int = None
+    match_norm = (match or "").strip()
+    cid_norm = (cid or "").strip()
+    only_flagged_bool = (only_flagged == "1")
+    has_analysis_norm = (has_analysis or "").strip()
+    ext_agent_account_norms = [str(v or "").strip() for v in (ext_agent_account or []) if str(v or "").strip()]
+    reception_scenario_norms = [str(v or "").strip() for v in (reception_scenario or []) if str(v or "").strip()]
+    satisfaction_change_norms = [str(v or "").strip() for v in (satisfaction_change or []) if str(v or "").strip()]
+
+    def _parse_int_list(values: list[str] | None) -> list[int]:
+        out: list[int] = []
+        for v in values or []:
+            s = str(v or "").strip()
+            if not s:
+                continue
+            try:
+                out.append(int(s))
+            except Exception:
+                continue
+        return out
+
+    agent_user_ids = _parse_int_list(agent_user_id)
+
+    tag_ids: list[int] = []
+    for s in (tag_id or []):
+        try:
+            v = int(str(s or "").strip())
+        except Exception:
+            continue
+        if v > 0:
+            tag_ids.append(v)
+    tag_ids = sorted(set(tag_ids))
+
+    cid_int: int | None = None
+    if cid_norm:
+        try:
+            cid_int = int(cid_norm)
+        except Exception:
+            cid_int = None
+
+    # rounds (non-system message count) range filter
+    def _parse_nonneg_int(s: str | None) -> int | None:
+        s = str(s or "").strip()
+        if not s:
+            return None
+        try:
+            v = int(float(s))
+        except Exception:
+            return None
+        return max(0, v)
+
+    min_rounds_i = _parse_nonneg_int(min_rounds)
+    max_rounds_i = _parse_nonneg_int(max_rounds)
+    if min_rounds_i is not None and max_rounds_i is not None and max_rounds_i < min_rounds_i:
+        min_rounds_i, max_rounds_i = max_rounds_i, min_rounds_i
 
     # Agent role: only see self
     if user.role == Role.agent:
-        agent_user_id_int = user.id
+        agent_user_ids = [user.id]
+
+    # Has analysis: 本接口默认就是“已质检（最新一条分析）”。如果用户筛“未质检”，直接返回空。
+    if has_analysis_norm == "0":
+        return {"total": 0, "page": int(page or 1), "per_page": int(per_page or 20), "items": [], "cids": []}
 
     page_i = 1
     per_page_i = 20
@@ -6485,8 +6801,10 @@ def get_tag_conversations(
 
     msg_count_subq = (
         select(Message.conversation_id.label("cid"), func.count(Message.id).label("message_count"))
+        .where(Message.sender != "system")
         .group_by(Message.conversation_id)
     ).subquery()
+    rounds_expr = func.coalesce(msg_count_subq.c.message_count, 0)
 
     where_terms = []
     if start_dt:
@@ -6495,25 +6813,71 @@ def get_tag_conversations(
         where_terms.append(event_ts_expr < end_dt)
     if platform_f:
         where_terms.append(Conversation.platform == platform_f)
-    if agent_user_id_int:
-        where_terms.append(binding_user_id == agent_user_id_int)
-    if scenario_f:
-        where_terms.append(ConversationAnalysis.reception_scenario == scenario_f)
-    if satisfaction_f:
-        where_terms.append(ConversationAnalysis.satisfaction_change == satisfaction_f)
+    if agent_user_ids:
+        where_terms.append(binding_user_id.in_(agent_user_ids))
+    if reception_scenario_norms:
+        where_terms.append(ConversationAnalysis.reception_scenario.in_(reception_scenario_norms))
+    if satisfaction_change_norms:
+        where_terms.append(ConversationAnalysis.satisfaction_change.in_(satisfaction_change_norms))
+    if only_flagged_bool:
+        where_terms.append(ConversationAnalysis.flag_for_review == True)
+    if cid_int is not None:
+        where_terms.append(Conversation.id == cid_int)
 
-    if tag_id_i:
+    if ext_agent_account_norms:
+        where_terms.append(
+            or_(
+                Conversation.agent_account.in_(ext_agent_account_norms),
+                exists(
+                    select(1)
+                    .select_from(Message)
+                    .where(
+                        Message.conversation_id == Conversation.id,
+                        Message.sender == "agent",
+                        Message.agent_account.in_(ext_agent_account_norms),
+                    )
+                ),
+            )
+        )
+
+    if match_norm:
+        like = f"%{match_norm}%"
+        where_terms.append(
+            exists(
+                select(1)
+                .select_from(Message)
+                .where(
+                    Message.conversation_id == Conversation.id,
+                    Message.sender != "system",
+                    Message.text.ilike(like),
+                )
+            )
+        )
+
+    if tag_ids:
         where_terms.append(
             exists(
                 select(1)
                 .select_from(ConversationTagHit)
                 .where(
                     ConversationTagHit.analysis_id == latest_subq.c.analysis_id,
-                    ConversationTagHit.tag_id == tag_id_i,
+                    ConversationTagHit.tag_id.in_(tag_ids),
                 )
             )
         )
-    elif category_id_i:
+
+    if hit_tag_id:
+        where_terms.append(
+            exists(
+                select(1)
+                .select_from(ConversationTagHit)
+                .where(
+                    ConversationTagHit.analysis_id == latest_subq.c.analysis_id,
+                    ConversationTagHit.tag_id == int(hit_tag_id),
+                )
+            )
+        )
+    elif hit_category_id:
         where_terms.append(
             exists(
                 select(1)
@@ -6521,10 +6885,15 @@ def get_tag_conversations(
                 .join(TagDefinition, TagDefinition.id == ConversationTagHit.tag_id)
                 .where(
                     ConversationTagHit.analysis_id == latest_subq.c.analysis_id,
-                    TagDefinition.category_id == category_id_i,
+                    TagDefinition.category_id == int(hit_category_id),
                 )
             )
         )
+
+    if min_rounds_i is not None:
+        where_terms.append(rounds_expr >= min_rounds_i)
+    if max_rounds_i is not None:
+        where_terms.append(rounds_expr <= max_rounds_i)
 
     base_stmt = (
         select(Conversation.id.label("cid"))
@@ -6533,6 +6902,8 @@ def get_tag_conversations(
         .join(ConversationAnalysis, ConversationAnalysis.id == latest_subq.c.analysis_id)
         .outerjoin(AgentBinding, and_(AgentBinding.platform == Conversation.platform, AgentBinding.agent_account == Conversation.agent_account))
     )
+    if min_rounds_i is not None or max_rounds_i is not None:
+        base_stmt = base_stmt.outerjoin(msg_count_subq, msg_count_subq.c.cid == Conversation.id)
     if where_terms:
         base_stmt = base_stmt.where(*where_terms)
 

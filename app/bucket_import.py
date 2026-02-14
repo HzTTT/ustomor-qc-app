@@ -3,18 +3,19 @@ from __future__ import annotations
 import gzip
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from importers.json_import import import_json_batch
 from importers.leyan_import import import_leyan_jsonl
-from models import BucketObject, ImportRun
+from models import BucketObject, ImportRun, Conversation, Message
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -174,6 +175,54 @@ def _choose_importer(key: str) -> str:
     if "/leyan/" in low or low.startswith("leyan/"):
         return "leyan"
     return "ai"
+
+
+def _recalc_platform_day_totals(session: Session, *, platform: str, run_date: str) -> tuple[int, int]:
+    """Return (conversations_total, messages_total) for a given platform+day.
+
+    We compute totals from DB to keep the admin board stable even when:
+    - the same day is re-imported with a new ETag
+    - older importer versions reported non-idempotent per-file counts
+    """
+    plat = (platform or "").strip().lower() or "unknown"
+    ds = (run_date or "").strip()
+    try:
+        day_start = datetime.fromisoformat(ds)
+    except Exception:
+        return (0, 0)
+    day_end = day_start + timedelta(days=1)
+
+    ts_expr = func.coalesce(Conversation.started_at, Conversation.uploaded_at)
+
+    conv_total = session.exec(
+        select(func.count(Conversation.id)).where(
+            Conversation.platform == plat,
+            ts_expr >= day_start,
+            ts_expr < day_end,
+        )
+    ).one()
+    try:
+        conv_total_i = int(conv_total or 0)
+    except Exception:
+        conv_total_i = 0
+
+    msg_total = session.exec(
+        select(func.count(Message.id))
+        .select_from(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .where(
+            Conversation.platform == plat,
+            ts_expr >= day_start,
+            ts_expr < day_end,
+        )
+    ).one()
+    try:
+        msg_total_i = int(msg_total or 0)
+    except Exception:
+        msg_total_i = 0
+
+    return (conv_total_i, msg_total_i)
+
 
 def sync_bucket_once(
     session: Session,
@@ -351,19 +400,29 @@ def sync_bucket_once(
                     files_inc = int(result.get("imported_files") or 0) if isinstance(result, dict) else 0
                     if files_inc <= 0:
                         files_inc = 1 if ok else 0
+
+                    # Recompute day totals from DB (truth). Keep delta as diagnostics.
+                    conv_total, msg_total = _recalc_platform_day_totals(session, platform=plat, run_date=ds)
                     payload = {
                         "bucket": cfg.bucket,
                         "prefix": cfg.prefix or "",
                         "files_imported": files_inc,
-                        "conversations": conv_inc,
-                        "messages": msg_inc,
+                        "conversations": conv_total,
+                        "messages": msg_total,
+                        "delta_conversations": conv_inc,
+                        "delta_messages": msg_inc,
+                        "last_object_key": it.key,
+                        "last_object_etag": it.etag,
+                        "last_object_imported_at": datetime.utcnow().isoformat(),
                     }
                     if ir:
                         # accumulate counts across multiple files for same (platform, date)
                         prev = ir.details or {}
                         payload["files_imported"] = int(prev.get("files_imported") or 0) + files_inc
-                        payload["conversations"] = int(prev.get("conversations") or 0) + conv_inc
-                        payload["messages"] = int(prev.get("messages") or 0) + msg_inc
+
+                        # Keep a running delta as well (helps spotting re-import noise).
+                        payload["delta_conversations"] = int(prev.get("delta_conversations") or 0) + conv_inc
+                        payload["delta_messages"] = int(prev.get("delta_messages") or 0) + msg_inc
 
                         if ir.status != "error":
                             ir.status = "done" if ok else "error"

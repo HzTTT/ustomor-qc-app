@@ -21,6 +21,10 @@ class AuthSettings(BaseSettings):
     COOKIE_NAME: str = "qc_token"
     # 生产环境(HTTPS)建议设为 True；本地 http 开发默认 False，避免 cookie 不生效
     COOKIE_SECURE: bool = False
+    # Cookie SameSite: lax/strict/none. If set to "none", Secure will be forced on.
+    COOKIE_SAMESITE: str = "lax"
+    # Optional cookie domain (e.g. "marllen.com" to cover www/non-www).
+    COOKIE_DOMAIN: str = ""
 
     class Config:
         case_sensitive = False

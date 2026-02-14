@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    restart: unless-stopped
     environment:
       # IMPORTANT: if you already have an existing db volume, these values must
       # match the roles created during the FIRST init.
@@ -24,6 +25,7 @@ services:
   app:
     build:
       context: ./app
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -54,6 +56,7 @@ services:
     volumes:
       - ./data:/data
       - ./scripts:/app/scripts
+      - ./:/workspace
     ports:
       - "8000:8000"
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -61,6 +64,7 @@ services:
   worker:
     build:
       context: ./app
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -82,11 +86,22 @@ services:
       OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-high}
     volumes:
       - ./data:/data
-    command: ["python", "worker.py"]
+      - ./:/workspace
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        # Ensure Codex CLI has auth inside the container (non-interactive).
+        if [ -n "${OPENAI_API_KEY:-}" ]; then
+          printf '%s\n' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null 2>&1 || true
+        fi
+        python worker.py
 
   cron:
     build:
       context: ./app
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy

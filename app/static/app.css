@@ -228,8 +228,9 @@ dialog {
 .marllen-logo {
   display: inline-block;
   background: #000;
-  -webkit-mask-image: url("/static/marllen_clover.png");
-  mask-image: url("/static/marllen_clover.png");
+  /* Use relative URL so it works even if the app is mounted under a path prefix. */
+  -webkit-mask-image: url("./marllen_clover.png");
+  mask-image: url("./marllen_clover.png");
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;

@@ -5,17 +5,40 @@
   {% if error %}
     <div class="mb-4 text-sm text-red-600">{{ error }}</div>
   {% endif %}
-  <form method="post" action="/login" class="space-y-3">
+  <form method="post" action="/login" class="space-y-3" autocomplete="on">
     {% if next %}
       <input type="hidden" name="next" value="{{ next }}" />
     {% endif %}
     <div>
-      <label class="block text-sm text-slate-600 mb-1">用户名</label>
-      <input name="username" type="text" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="login-username" class="block text-sm text-slate-600 mb-1">用户名</label>
+      <input
+        id="login-username"
+        name="username"
+        type="text"
+        class="w-full border rounded-xl px-3 py-2"
+        autocomplete="username"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        inputmode="text"
+        enterkeyhint="next"
+        required
+      />
     </div>
     <div>
-      <label class="block text-sm text-slate-600 mb-1">密码</label>
-      <input name="password" type="password" class="w-full border rounded-xl px-3 py-2" required />
+      <label for="login-password" class="block text-sm text-slate-600 mb-1">密码</label>
+      <input
+        id="login-password"
+        name="password"
+        type="password"
+        class="w-full border rounded-xl px-3 py-2"
+        autocomplete="current-password"
+        autocapitalize="none"
+        autocorrect="off"
+        spellcheck="false"
+        enterkeyhint="go"
+        required
+      />
     </div>
     <div class="flex items-center justify-between">
       <label class="inline-flex items-center gap-2 text-sm text-slate-600 select-none">
@@ -24,7 +47,7 @@
         <span>保持登录{{ remember_days or 7 }}天</span>
       </label>
     </div>
-    <button class="w-full bg-slate-900 text-white rounded-xl py-2">登录</button>
+    <button type="submit" class="w-full bg-slate-900 text-white rounded-xl py-2">登录</button>
   </form>
   <div class="mt-4 text-sm text-slate-500">
     没有账号？<a class="underline" href="/register">去注册</a>

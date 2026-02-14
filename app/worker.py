@@ -46,6 +46,45 @@ def _wait_for_schema() -> None:
     raise RuntimeError("worker: schema not ready within deadline (is app running?)")
 
 
+async def _assistant_job_heartbeat_loop(job_id: int, *, interval_s: float = 10.0) -> None:
+    """Keep a DB heartbeat while an assistant job is running.
+
+    Why: we may run multiple worker replicas. Without a heartbeat, a "stale recovery"
+    pass can mistakenly mark a long-running but active job as error, which causes
+    the reply to be dropped and the UI to look like "没有显示".
+    """
+    if not job_id:
+        return
+    interval_s = max(3.0, float(interval_s or 10.0))
+    ident = (os.getenv("HOSTNAME") or "").strip() or f"pid:{os.getpid()}"
+
+    while True:
+        try:
+            with Session(engine) as s:
+                # Local imports to avoid circular deps at import time.
+                from models import AssistantJob  # type: ignore
+                from marllen_assistant import _utc_iso_z
+
+                j = s.get(AssistantJob, int(job_id))
+                if not j:
+                    return
+                st = str(getattr(getattr(j, "status", None), "value", None) or getattr(j, "status", None) or "").strip().lower()
+                if st != "running":
+                    return
+
+                extra = dict(j.extra or {}) if isinstance(getattr(j, "extra", None), dict) else {}
+                extra["heartbeat_at"] = _utc_iso_z()
+                extra["claimed_by"] = ident
+                j.extra = extra
+                s.add(j)
+                s.commit()
+        except Exception:
+            # Best-effort only; never break the worker loop.
+            pass
+
+        await asyncio.sleep(interval_s)
+
+
 async def _run_daily_job(session: Session, job) -> None:
     extra = job.extra or {}
     run_date = (job.run_date or "").strip()
@@ -95,11 +134,20 @@ async def main() -> None:
                 ajob = None
 
             if ajob:
+                hb_task = None
                 try:
+                    hb_task = asyncio.create_task(_assistant_job_heartbeat_loop(int(ajob.id or 0)))
                     mid = await generate_assistant_reply(session, job=ajob)
                     mark_assistant_job_done(session, ajob, assistant_message_id=mid)
                 except Exception as e:
                     mark_assistant_job_error(session, ajob, str(e))
+                finally:
+                    if hb_task:
+                        try:
+                            hb_task.cancel()
+                            await hb_task
+                        except Exception:
+                            pass
 
                 await asyncio.sleep(0.2)
                 continue

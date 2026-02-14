@@ -5,6 +5,20 @@ echo "客服质检系统 - 启动脚本"
 echo "=========================================="
 echo ""
 
+# 构建本地 Tailwind CSS，避免依赖外网 CDN（在国内环境经常不稳定/被拦截）。
+if command -v npm >/dev/null 2>&1; then
+    echo "构建前端样式 (Tailwind)..."
+    npm run build:tailwind >/dev/null 2>&1 || echo "⚠️  Tailwind 构建失败（将继续启动，但界面可能缺少样式）"
+else
+    echo "⚠️  未检测到 npm，跳过 Tailwind 构建（界面可能缺少样式）"
+fi
+
+if [ ! -f "app/static/tailwind.css" ]; then
+    echo "❌ 未找到 app/static/tailwind.css。为避免出现“只有文本没 UI”，本次启动中止。"
+    echo "   解决办法：安装 Node/npm 后执行：npm install && npm run build:tailwind"
+    exit 1
+fi
+
 # 检查是否存在 pgdata 目录
 if [ -d "pgdata" ]; then
     echo "✓ 检测到已有数据库数据目录 (pgdata/)"

@@ -2,11 +2,14 @@
   "name": "customor-qc-app-ui-tools",
   "private": true,
   "devDependencies": {
-    "playwright": "^1.58.1"
+    "playwright": "^1.58.1",
+    "tailwindcss": "^3.4.17"
   },
   "scripts": {
+    "build:tailwind": "tailwindcss -c tailwind.config.js -i ./tailwind.input.css -o ./app/static/tailwind.css --minify",
     "ui:mobile-smoke": "node scripts/ui_smoke_mobile_drag.js",
     "ui:assistant-mobile-smoke": "node scripts/ui_smoke_mobile_assistant_scroll_lock.js",
-    "ui:assistant-refresh-smoke": "node scripts/ui_smoke_assistant_refresh_wait.js"
+    "ui:assistant-refresh-smoke": "node scripts/ui_smoke_assistant_refresh_wait.js",
+    "ui:css-smoke": "node scripts/ui_smoke_css_loaded.js"
   }
 }

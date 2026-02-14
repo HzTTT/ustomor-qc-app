@@ -1,0 +1,93 @@
+{
+  "source": "tmp_quality_messages.csv",
+  "generated_at": "2026-02-08T19:27:38Z",
+  "date_range": {
+    "min": "2026-01-19",
+    "max": "2026-02-02"
+  },
+  "rows_messages": 10136,
+  "distinct": {
+    "platform": [
+      "taobao"
+    ],
+    "thread_key": 269,
+    "buyer_id": 268,
+    "conversation_id": 526
+  },
+  "sender_counts": {
+    "agent": 4623,
+    "buyer": 4337,
+    "system": 1176
+  },
+  "attachments_nonempty_rows": 10136,
+  "weekly_platform_conversations": [
+    {
+      "week_start": "2026-01-19",
+      "platform": "taobao",
+      "conversations": 274
+    },
+    {
+      "week_start": "2026-01-26",
+      "platform": "taobao",
+      "conversations": 215
+    },
+    {
+      "week_start": "2026-02-02",
+      "platform": "taobao",
+      "conversations": 37
+    }
+  ],
+  "last7": {
+    "start": "2026-01-27",
+    "end": "2026-02-02",
+    "messages": 4242,
+    "conversations": 217,
+    "buyers": 137,
+    "avg_messages_per_conversation": 19.548387096774192,
+    "daily": [
+      {
+        "date": "2026-01-27",
+        "messages": 813,
+        "conversations": 36
+      },
+      {
+        "date": "2026-01-28",
+        "messages": 626,
+        "conversations": 34
+      },
+      {
+        "date": "2026-01-29",
+        "messages": 423,
+        "conversations": 25
+      },
+      {
+        "date": "2026-01-30",
+        "messages": 370,
+        "conversations": 23
+      },
+      {
+        "date": "2026-01-31",
+        "messages": 418,
+        "conversations": 24
+      },
+      {
+        "date": "2026-02-01",
+        "messages": 927,
+        "conversations": 38
+      },
+      {
+        "date": "2026-02-02",
+        "messages": 665,
+        "conversations": 37
+      }
+    ]
+  },
+  "prev7": {
+    "start": "2026-01-20",
+    "end": "2026-01-26",
+    "messages": 5320,
+    "conversations": 274,
+    "buyers": 172,
+    "avg_messages_per_conversation": 19.416058394160583
+  }
+}

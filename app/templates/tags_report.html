@@ -15,12 +15,16 @@
 {% endif %}
 
 <div class="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-6">
-  <div id="pivot-sidebar" class="bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:sticky lg:top-24 lg:self-start">
+  <div id="pivot-sidebar" class="order-2 lg:order-1 bg-white border rounded-2xl p-4 shadow-sm mb-4 lg:mb-0 lg:sticky lg:top-24 lg:self-start">
     <div class="flex items-start justify-between gap-3">
       <div>
         <div class="font-medium">行维度</div>
-        <div class="text-xs text-slate-500 mt-1">拖拽选择并排序：报表会按这些维度逐层分组。系统会自动补充「标签一级分类/标签」。</div>
+        <div class="text-xs text-slate-500 mt-1">拖拽选择并排序：报表会按这些维度逐层分组。系统会自动补充「标签一级分类/标签」。不选行维度时，将直接展示“标签一级分类 → 标签”的汇总。</div>
       </div>
+    </div>
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      <button id="row-clear" type="button" class="px-2.5 py-1 rounded-lg border text-xs bg-white hover:bg-slate-50">清空行维度</button>
+      <button id="row-default" type="button" class="px-2.5 py-1 rounded-lg border text-xs bg-white hover:bg-slate-50">恢复默认</button>
     </div>
     <div class="mt-3 rounded-xl border bg-slate-50">
       <div class="p-3 space-y-3">
@@ -64,95 +68,278 @@
     <div class="mt-3 text-xs text-slate-500">提示：每一层都会自动带上「标签一级分类」和「标签」。手机端可长按维度标签拖拽排序/移动。</div>
   </div>
 
-  <div class="min-w-0">
+  <div class="order-1 lg:order-2 min-w-0">
     <div class="bg-white border rounded-2xl p-4" id="pivot-filter-card">
-  <form id="pivot-filters" class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end" onsubmit="return false;">
-    <div class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">时间维度</label>
-      <select id="time-mode" class="w-full border rounded-xl px-3 py-2 text-sm">
-        {% for k, label in time_modes %}
-          <option value="{{ k }}" {% if k == filters.time_mode %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
+  <form id="pivot-filters" onsubmit="return false;">
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+      <div class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">时间维度</label>
+        <select id="time-mode" class="w-full border rounded-xl px-3 py-2 text-sm">
+          {% for k, label in time_modes %}
+            <option value="{{ k }}" {% if k == filters.time_mode %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div id="year-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">年份</label>
+        <select id="year-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+      </div>
+      <div id="quarter-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">季度</label>
+        <select id="quarter-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+      </div>
+      <div id="month-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">月份</label>
+        <select id="month-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+      </div>
+      <div id="week-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">周次</label>
+        <select id="week-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
+      </div>
+      <div id="day-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">日期</label>
+        <input type="date" id="day-select" class="w-full border rounded-xl px-3 py-2 text-sm" />
+      </div>
+      <div id="custom-start-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">起始</label>
+        <input type="date" id="start-date" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+      </div>
+      <div id="custom-end-wrap" class="md:col-span-2">
+        <label class="block text-xs text-slate-500 mb-1">结束</label>
+        <input type="date" id="end-date" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
+      </div>
+
+      <div class="md:col-span-4">
+        <label class="block text-xs text-slate-500 mb-1">平台</label>
+        <select id="platform-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
+          <option value="">全部</option>
+          {% for p in platform_options %}
+            <option value="{{ p }}" {% if p == filters.platform %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
     </div>
-    <div id="year-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">年份</label>
-      <select id="year-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
-    </div>
-    <div id="quarter-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">季度</label>
-      <select id="quarter-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
-    </div>
-    <div id="month-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">月份</label>
-      <select id="month-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
-    </div>
-    <div id="week-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">周次</label>
-      <select id="week-select" class="w-full border rounded-xl px-3 py-2 text-sm"></select>
-    </div>
-    <div id="day-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">日期</label>
-      <input type="date" id="day-select" class="w-full border rounded-xl px-3 py-2 text-sm" />
-    </div>
-    <div id="custom-start-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">起始</label>
-      <input type="date" id="start-date" value="{{ filters.start }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
-    </div>
-    <div id="custom-end-wrap" class="md:col-span-2">
-      <label class="block text-xs text-slate-500 mb-1">结束</label>
-      <input type="date" id="end-date" value="{{ filters.end }}" class="w-full border rounded-xl px-3 py-2 text-sm" />
-    </div>
-    <div class="md:col-span-3">
-      <label class="block text-xs text-slate-500 mb-1">平台</label>
-      <select id="platform-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
-        <option value="">全部</option>
-        {% for p in platform_options %}
-          <option value="{{ p }}" {% if p == filters.platform %}selected{% endif %}>{{ p }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="md:col-span-3">
-      <label class="block text-xs text-slate-500 mb-1">站内客服</label>
-      <select id="agent-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
-        <option value="">全部</option>
-        {% for u in agent_options %}
-          <option value="{{ u.id }}" {% if (filters.agent_user_id|string) == (u.id|string) %}selected{% endif %}>{{ u.label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="md:col-span-3">
-      <label class="block text-xs text-slate-500 mb-1">接待场景</label>
-      <select id="scenario-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
-        <option value="">全部</option>
-        <option value="售前">售前</option>
-        <option value="售后">售后</option>
-        <option value="售前和售后">售前和售后</option>
-        <option value="其他接待场景">其他接待场景</option>
-        <option value="无法判定">无法判定</option>
-        <option value="未知">未知</option>
-      </select>
-    </div>
-    <div class="md:col-span-3">
-      <label class="block text-xs text-slate-500 mb-1">满意度变化</label>
-      <select id="satisfaction-filter" class="w-full border rounded-xl px-3 py-2 text-sm">
-        <option value="">全部</option>
-        <option value="大幅减少">大幅减少</option>
-        <option value="小幅减少">小幅减少</option>
-        <option value="无显著变化">无显著变化</option>
-        <option value="小幅增加">小幅增加</option>
-        <option value="大幅增加">大幅增加</option>
-        <option value="无法判定">无法判定</option>
-        <option value="未知">未知</option>
-      </select>
+
+    <details class="mt-3 rounded-2xl border bg-slate-50 p-3" id="advanced-filters">
+      <summary class="cursor-pointer select-none text-sm text-slate-700 flex items-center justify-between">
+        <span class="font-medium">更多筛选</span>
+        <span class="text-xs text-slate-500">站内/站外客服、标签、关键词、CID、轮数等</span>
+      </summary>
+      <div class="mt-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">站内客服账号</label>
+          <div class="relative" data-dropdown data-dropdown-group="agent">
+            <button type="button" class="w-full border rounded-xl px-3 py-2 text-sm bg-white flex items-center justify-between gap-3" data-dropdown-button>
+              <span class="truncate">选择客服</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap" data-dropdown-count>全部</span>
+            </button>
+            <div class="absolute left-0 right-0 mt-2 p-3 hidden z-50 rounded-2xl border bg-white shadow-lg max-h-72 overflow-auto" data-dropdown-panel>
+              <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>站内客服账号</span>
+                <div class="flex gap-2">
+                  <button type="button" class="underline" data-action="select-all" data-target="agent">全选</button>
+                  <button type="button" class="underline" data-action="invert-all" data-target="agent">反选</button>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                {% for u in agent_options %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" value="{{ u.id }}" data-group="agent" class="accent-slate-900" checked />
+                    <span class="truncate">{{ u.label }}</span>
+                  </label>
+                {% endfor %}
+                {% if agent_options|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选客服</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">站外客服账号</label>
+          <div class="relative" data-dropdown data-dropdown-group="ext-agent">
+            <button type="button" class="w-full border rounded-xl px-3 py-2 text-sm bg-white flex items-center justify-between gap-3" data-dropdown-button>
+              <span class="truncate">选择站外账号</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap" data-dropdown-count>全部</span>
+            </button>
+            <div class="absolute left-0 right-0 mt-2 p-3 hidden z-50 rounded-2xl border bg-white shadow-lg max-h-72 overflow-auto" data-dropdown-panel>
+              <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>站外客服账号</span>
+                <div class="flex gap-2">
+                  <button type="button" class="underline" data-action="select-all" data-target="ext-agent">全选</button>
+                  <button type="button" class="underline" data-action="invert-all" data-target="ext-agent">反选</button>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                {% for acc in external_agent_accounts %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" value="{{ acc }}" data-group="ext-agent" class="accent-slate-900" checked />
+                    <span class="truncate">{{ acc }}</span>
+                  </label>
+                {% endfor %}
+                {% if external_agent_accounts|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选账号</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">具体标签（限制对话集合，可能出现共现标签）</label>
+          <div class="relative" data-dropdown data-dropdown-group="tag">
+            <button type="button" class="w-full border rounded-xl px-3 py-2 text-sm bg-white flex items-center justify-between gap-3" data-dropdown-button>
+              <span class="truncate">选择标签</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap" data-dropdown-count>全部</span>
+            </button>
+            <div class="absolute left-0 right-0 mt-2 p-3 hidden z-50 rounded-2xl border bg-white shadow-lg max-h-72 overflow-auto" data-dropdown-panel>
+              <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>具体标签</span>
+                <div class="flex gap-2">
+                  <button type="button" class="underline" data-action="select-all" data-target="tag">全选</button>
+                  <button type="button" class="underline" data-action="invert-all" data-target="tag">反选</button>
+                </div>
+              </div>
+              <div class="space-y-3 text-sm">
+                {% for cat in category_meta %}
+                  <div class="border-l-2 border-slate-200 pl-2">
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                      <span class="font-medium">{{ cat.name }}</span>
+                      <button type="button" class="underline" data-action="select-category" data-target="tag" data-category="{{ cat.id }}">全选该分类</button>
+                      <button type="button" class="underline" data-action="invert-category" data-target="tag" data-category="{{ cat.id }}">反选该分类</button>
+                    </div>
+                    <div class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                      {% set ns = namespace(has_tags=false) %}
+                      {% for t in tag_meta %}
+                        {% if t.category_id == cat.id %}
+                          {% set ns.has_tags = true %}
+                          <label class="flex items-center gap-2">
+                            <input type="checkbox" value="{{ t.id }}" data-group="tag" data-category="{{ cat.id }}" class="accent-slate-900" checked />
+                            <span class="truncate">{{ t.name }}</span>
+                          </label>
+                        {% endif %}
+                      {% endfor %}
+                      {% if not ns.has_tags %}
+                        <div class="text-xs text-slate-500">暂无标签</div>
+                      {% endif %}
+                    </div>
+                  </div>
+                {% endfor %}
+                {% if category_meta|length == 0 %}
+                  <div class="text-xs text-slate-500">暂无可选标签</div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">接待场景</label>
+          <div class="relative" data-dropdown data-dropdown-group="scenario">
+            <button type="button" class="w-full border rounded-xl px-3 py-2 text-sm bg-white flex items-center justify-between gap-3" data-dropdown-button>
+              <span class="truncate">选择场景</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap" data-dropdown-count>全部</span>
+            </button>
+            <div class="absolute left-0 right-0 mt-2 p-3 hidden z-50 rounded-2xl border bg-white shadow-lg max-h-72 overflow-auto" data-dropdown-panel>
+              <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>接待场景</span>
+                <div class="flex gap-2">
+                  <button type="button" class="underline" data-action="select-all" data-target="scenario">全选</button>
+                  <button type="button" class="underline" data-action="invert-all" data-target="scenario">反选</button>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 gap-y-1 text-sm">
+                {% set scenarios = ["售前", "售后", "售前和售后", "其他接待场景", "无法判定", "未知"] %}
+                {% for s in scenarios %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" value="{{ s }}" data-group="scenario" class="accent-slate-900" checked />
+                    <span>{{ "其他" if s == "其他接待场景" else s }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">满意度变化</label>
+          <div class="relative" data-dropdown data-dropdown-group="satisfaction">
+            <button type="button" class="w-full border rounded-xl px-3 py-2 text-sm bg-white flex items-center justify-between gap-3" data-dropdown-button>
+              <span class="truncate">选择变化</span>
+              <span class="text-xs text-slate-500 whitespace-nowrap" data-dropdown-count>全部</span>
+            </button>
+            <div class="absolute left-0 right-0 mt-2 p-3 hidden z-50 rounded-2xl border bg-white shadow-lg max-h-72 overflow-auto" data-dropdown-panel>
+              <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span>满意度变化</span>
+                <div class="flex gap-2">
+                  <button type="button" class="underline" data-action="select-all" data-target="satisfaction">全选</button>
+                  <button type="button" class="underline" data-action="invert-all" data-target="satisfaction">反选</button>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 gap-y-1 text-sm">
+                {% set satisfactions = ["大幅减少", "小幅减少", "无显著变化", "小幅增加", "大幅增加", "无法判定", "未知"] %}
+                {% for s in satisfactions %}
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" value="{{ s }}" data-group="satisfaction" class="accent-slate-900" checked />
+                    <span>{{ s }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="md:col-span-4">
+          <label class="block text-xs text-slate-500 mb-1">聊天匹配查询</label>
+          <input id="match-filter" placeholder="只要对话出现该内容，就会命中" class="w-full border rounded-xl px-3 py-2 text-sm bg-white" />
+        </div>
+
+        <div class="md:col-span-2">
+          <label class="block text-xs text-slate-500 mb-1">CID 编号</label>
+          <input id="cid-filter" type="number" placeholder="对话ID" class="w-full border rounded-xl px-3 py-2 text-sm bg-white" />
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs text-slate-500 mb-1">消息轮数范围</label>
+          <div class="flex items-center gap-2">
+            <input id="min-rounds-filter" type="number" min="0" placeholder="最低" class="flex-1 border rounded-xl px-3 py-2 text-sm bg-white" />
+            <span class="text-xs text-slate-400">-</span>
+            <input id="max-rounds-filter" type="number" min="0" placeholder="最高" class="flex-1 border rounded-xl px-3 py-2 text-sm bg-white" />
+          </div>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs text-slate-500 mb-1">是否已AI质检</label>
+          <select id="has-analysis-filter" class="w-full border rounded-xl px-3 py-2 text-sm bg-white">
+            <option value="">全部</option>
+            <option value="1">已质检</option>
+            <option value="0">未质检（本报表默认口径为“已质检”，因此会为空）</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3">
+          <label class="block text-xs text-slate-500 mb-1">其他</label>
+          <label class="flex items-center gap-2 px-3 py-2 rounded-xl border bg-white text-sm">
+            <input id="only-flagged-filter" type="checkbox" class="accent-slate-900" />
+            <span>仅看需要复查</span>
+          </label>
+        </div>
+
+        <div class="md:col-span-12 flex flex-wrap items-center justify-between gap-2 pt-1">
+          <button id="clear-advanced-filters" type="button" class="px-2.5 py-1 rounded-lg border text-xs bg-white hover:bg-slate-50">清空筛选（不改时间）</button>
+          <div class="text-[11px] text-slate-500">提示：多选筛选里，“全部/未选”都会按“全部”处理。</div>
+        </div>
+      </div>
+    </details>
+
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      <button id="toggle-mom" type="button" class="px-2.5 py-1 rounded-lg border text-xs">环比</button>
+      <button id="toggle-yoy" type="button" class="px-2.5 py-1 rounded-lg border text-xs">同比</button>
+      <button id="manual-refresh" type="button" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">刷新</button>
+      <div id="period-label" class="text-xs text-slate-500"></div>
     </div>
   </form>
-  <div class="mt-3 flex flex-wrap items-center gap-2">
-    <button id="toggle-mom" type="button" class="px-2.5 py-1 rounded-lg border text-xs">环比</button>
-    <button id="toggle-yoy" type="button" class="px-2.5 py-1 rounded-lg border text-xs">同比</button>
-    <button id="manual-refresh" type="button" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">刷新</button>
-    <div id="period-label" class="text-xs text-slate-500"></div>
-  </div>
     </div>
 
     <div class="mt-4 bg-white border rounded-2xl p-4">
@@ -366,13 +553,21 @@
   const BASE_FIELDS = ["tag_category", "tag"];
 
   const DEFAULT_STATE = {
-    time_mode: "{{ filters.time_mode }}",
-    start: "{{ filters.start }}",
-    end: "{{ filters.end }}",
+    time_mode: "yesterday",
+    start: "",
+    end: "",
     platform: "{{ filters.platform }}",
-    agent_user_id: "{{ filters.agent_user_id }}",
-    reception_scenario: "",
-    satisfaction_change: "",
+    agent_user_id: [],
+    ext_agent_account: [],
+    match: "",
+    cid: "",
+    min_rounds: "",
+    max_rounds: "",
+    only_flagged: false,
+    has_analysis: "",
+    tag_id: [],
+    reception_scenario: [],
+    satisfaction_change: [],
     show_mom: true,
     show_yoy: {{ "true" if filters.yoy else "false" }},
     row_fields: ["platform"],
@@ -415,7 +610,44 @@
   function sanitizeRowFields(fields) {
     const allowed = new Set(FIELD_DEFS.map(f => f.id));
     const cleaned = Array.isArray(fields) ? fields.filter(f => allowed.has(f)) : [];
-    return cleaned.length ? cleaned : DEFAULT_STATE.row_fields.slice();
+    return cleaned;
+  }
+
+  function toStringList(v) {
+    if (Array.isArray(v)) {
+      return v.map(x => String(x || "").trim()).filter(Boolean);
+    }
+    const s = String(v || "").trim();
+    return s ? [s] : [];
+  }
+
+  function parseYMDLocal(ymd) {
+    const s = String(ymd || "").trim();
+    if (!s) return null;
+    const parts = s.split("-");
+    if (parts.length !== 3) return null;
+    const y = Number(parts[0]);
+    const m = Number(parts[1]);
+    const d = Number(parts[2]);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d);
+  }
+
+  function formatYMDLocal(dateObj) {
+    const d = dateObj instanceof Date ? dateObj : null;
+    if (!d) return "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  function getYesterdayYMD() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const y = new Date(today);
+    y.setDate(today.getDate() - 1);
+    return formatYMDLocal(y);
   }
 
   function loadState() {
@@ -426,6 +658,12 @@
       if (saved && typeof saved === "object") {
         state = { ...state, ...saved };
         state.row_fields = sanitizeRowFields(state.row_fields);
+        state.agent_user_id = toStringList(state.agent_user_id);
+        state.ext_agent_account = toStringList(state.ext_agent_account);
+        state.tag_id = toStringList(state.tag_id);
+        state.reception_scenario = toStringList(state.reception_scenario);
+        state.satisfaction_change = toStringList(state.satisfaction_change);
+        state.only_flagged = !!state.only_flagged;
       }
     } catch (e) {}
   }
@@ -523,7 +761,8 @@
 
   function syncTimeSelectorsFromState() {
     const now = new Date();
-    const startDate = state.start ? new Date(state.start) : now;
+    const parsed = parseYMDLocal(state.start);
+    const startDate = parsed || now;
     const year = state.year || String(startDate.getFullYear());
     const quarter = state.quarter || String(Math.floor(startDate.getMonth() / 3) + 1);
     const month = state.month || String(startDate.getMonth() + 1);
@@ -559,7 +798,7 @@
         quarter: String(Math.floor(yesterday.getMonth() / 3) + 1),
         month: String(yesterday.getMonth() + 1),
         week: String(getISOWeek(yesterday)),
-        day: yesterday.toISOString().slice(0, 10),
+        day: formatYMDLocal(yesterday),
       };
     }
 
@@ -643,14 +882,24 @@
     document.getElementById("start-date").value = state.start || "";
     document.getElementById("end-date").value = state.end || "";
     document.getElementById("platform-filter").value = state.platform || "";
-    document.getElementById("agent-filter").value = state.agent_user_id || "";
-    document.getElementById("scenario-filter").value = state.reception_scenario || "";
-    document.getElementById("satisfaction-filter").value = state.satisfaction_change || "";
+    const matchEl = document.getElementById("match-filter");
+    if (matchEl) matchEl.value = state.match || "";
+    const cidEl = document.getElementById("cid-filter");
+    if (cidEl) cidEl.value = state.cid || "";
+    const minEl = document.getElementById("min-rounds-filter");
+    if (minEl) minEl.value = state.min_rounds || "";
+    const maxEl = document.getElementById("max-rounds-filter");
+    if (maxEl) maxEl.value = state.max_rounds || "";
+    const onlyEl = document.getElementById("only-flagged-filter");
+    if (onlyEl) onlyEl.checked = !!state.only_flagged;
+    const haEl = document.getElementById("has-analysis-filter");
+    if (haEl) haEl.value = state.has_analysis || "";
     initTimeSelectors();
     ensureDefaultTimeForMode(document.getElementById("time-mode").value, false);
     syncTimeSelectorsFromState();
     updateToggleButtons();
     applyTimeModeUI();
+    applyMultiSelectState();
   }
 
   function applyTimeModeUI() {
@@ -761,7 +1010,7 @@
         const year = document.getElementById("year-select").value;
         const week = document.getElementById("week-select").value;
         const anchorDate = isoWeekToDate(Number(year), Number(week));
-        anchor = anchorDate.toISOString().slice(0, 10);
+        anchor = formatYMDLocal(anchorDate);
         setState({ year, week });
       } else {
         const day = document.getElementById("day-select").value;
@@ -777,14 +1026,31 @@
     }
 
     const platform = document.getElementById("platform-filter").value;
-    const agentUserId = document.getElementById("agent-filter").value;
-    const scenario = document.getElementById("scenario-filter").value;
-    const satisfaction = document.getElementById("satisfaction-filter").value;
+    const match = (document.getElementById("match-filter")?.value || "").trim();
+    const cid = (document.getElementById("cid-filter")?.value || "").trim();
+    const minRounds = (document.getElementById("min-rounds-filter")?.value || "").trim();
+    const maxRounds = (document.getElementById("max-rounds-filter")?.value || "").trim();
+    const onlyFlagged = document.getElementById("only-flagged-filter")?.checked ? "1" : "";
+    const hasAnalysis = (document.getElementById("has-analysis-filter")?.value || "").trim();
+
+    const agents = getSelectedValues("agent");
+    const extAgents = getSelectedValues("ext-agent");
+    const scenarios = getSelectedValues("scenario");
+    const satisfactions = getSelectedValues("satisfaction");
+    const tags = getSelectedValues("tag");
 
     if (platform) params.append("platform", platform);
-    if (agentUserId) params.append("agent_user_id", agentUserId);
-    if (scenario) params.append("reception_scenario", scenario);
-    if (satisfaction) params.append("satisfaction_change", satisfaction);
+    agents.forEach(v => params.append("agent_user_id", v));
+    extAgents.forEach(v => params.append("ext_agent_account", v));
+    scenarios.forEach(v => params.append("reception_scenario", v));
+    satisfactions.forEach(v => params.append("satisfaction_change", v));
+    tags.forEach(v => params.append("tag_id", v));
+    if (match) params.append("match", match);
+    if (cid) params.append("cid", cid);
+    if (minRounds) params.append("min_rounds", minRounds);
+    if (maxRounds) params.append("max_rounds", maxRounds);
+    if (onlyFlagged) params.append("only_flagged", "1");
+    if (hasAnalysis) params.append("has_analysis", hasAnalysis);
 
     if (state.show_yoy) {
       params.append("yoy", "1");
@@ -793,9 +1059,17 @@
     setState({
       time_mode: mode,
       platform: platform,
-      agent_user_id: agentUserId,
-      reception_scenario: scenario,
-      satisfaction_change: satisfaction,
+      agent_user_id: agents,
+      ext_agent_account: extAgents,
+      reception_scenario: scenarios,
+      satisfaction_change: satisfactions,
+      tag_id: tags,
+      match: match,
+      cid: cid,
+      min_rounds: minRounds,
+      max_rounds: maxRounds,
+      only_flagged: !!onlyFlagged,
+      has_analysis: hasAnalysis,
     });
 
     try {
@@ -1810,9 +2084,20 @@
   document.getElementById("week-select").addEventListener("change", scheduleRefresh);
   document.getElementById("day-select").addEventListener("change", scheduleRefresh);
   document.getElementById("platform-filter").addEventListener("change", scheduleRefresh);
-  document.getElementById("agent-filter").addEventListener("change", scheduleRefresh);
-  document.getElementById("scenario-filter").addEventListener("change", scheduleRefresh);
-  document.getElementById("satisfaction-filter").addEventListener("change", scheduleRefresh);
+  document.getElementById("match-filter")?.addEventListener("change", scheduleRefresh);
+  document.getElementById("cid-filter")?.addEventListener("change", scheduleRefresh);
+  document.getElementById("min-rounds-filter")?.addEventListener("change", scheduleRefresh);
+  document.getElementById("max-rounds-filter")?.addEventListener("change", scheduleRefresh);
+  document.getElementById("only-flagged-filter")?.addEventListener("change", scheduleRefresh);
+  document.getElementById("has-analysis-filter")?.addEventListener("change", scheduleRefresh);
+
+  document.addEventListener("change", (e) => {
+    const t = e.target;
+    if (!t) return;
+    if (t.type === "checkbox" && t.hasAttribute("data-group")) {
+      scheduleRefresh();
+    }
+  });
 
   document.getElementById("manual-refresh").addEventListener("click", refreshReport);
   document.getElementById("toggle-mom").addEventListener("click", () => {
@@ -1835,6 +2120,213 @@
     const level = Number(document.getElementById("level-select").value || 1);
     expandCollapseLevel(level, false);
   });
+
+  document.getElementById("row-clear")?.addEventListener("click", () => {
+    setState({ row_fields: [] });
+    renderFieldChips();
+    renderPivot();
+  });
+  document.getElementById("row-default")?.addEventListener("click", () => {
+    setState({ row_fields: DEFAULT_STATE.row_fields.slice() });
+    renderFieldChips();
+    renderPivot();
+  });
+
+  document.getElementById("clear-advanced-filters")?.addEventListener("click", () => {
+    setState({
+      platform: "",
+      agent_user_id: [],
+      ext_agent_account: [],
+      match: "",
+      cid: "",
+      min_rounds: "",
+      max_rounds: "",
+      only_flagged: false,
+      has_analysis: "",
+      tag_id: [],
+      reception_scenario: [],
+      satisfaction_change: [],
+    });
+    applyStateToFilters();
+    scheduleRefresh();
+  });
+
+  function getBoxes(group, category, root) {
+    let selector = 'input[type="checkbox"][data-group="' + group + '"]';
+    if (category) selector += '[data-category="' + category + '"]';
+    return Array.prototype.slice.call((root || document).querySelectorAll(selector));
+  }
+
+  function updateDropdownCount(dropdown) {
+    if (!dropdown) return;
+    const group = dropdown.getAttribute("data-dropdown-group");
+    if (!group) return;
+    const boxes = getBoxes(group, "", dropdown);
+    const count = boxes.reduce((acc, box) => acc + (box.checked ? 1 : 0), 0);
+    const label = dropdown.querySelector("[data-dropdown-count]");
+    if (label) {
+      if (!boxes.length) {
+        label.textContent = "暂无";
+        return;
+      }
+      if (count === 0 || count === boxes.length) {
+        label.textContent = "全部";
+        return;
+      }
+      label.textContent = `已选 ${count}`;
+    }
+  }
+
+  function updateAllDropdownCounts() {
+    document.querySelectorAll("[data-dropdown]").forEach(dd => updateDropdownCount(dd));
+  }
+
+  function setDropdownOpen(dropdown, open) {
+    const panel = dropdown.querySelector("[data-dropdown-panel]");
+    const button = dropdown.querySelector("[data-dropdown-button]");
+    if (!panel || !button) return;
+    if (open) {
+      panel.classList.remove("hidden");
+      dropdown.setAttribute("data-open", "1");
+      button.setAttribute("aria-expanded", "true");
+    } else {
+      panel.classList.add("hidden");
+      dropdown.removeAttribute("data-open");
+      button.setAttribute("aria-expanded", "false");
+    }
+  }
+
+  function closeAllDropdowns(except) {
+    document.querySelectorAll("[data-dropdown][data-open]").forEach(dd => {
+      if (except && dd === except) return;
+      setDropdownOpen(dd, false);
+    });
+  }
+
+  document.addEventListener("click", function (event) {
+    const toggle = event.target.closest("[data-dropdown-button]");
+    if (toggle) {
+      const dropdown = toggle.closest("[data-dropdown]");
+      if (!dropdown) return;
+      const isOpen = dropdown.getAttribute("data-open") === "1";
+      closeAllDropdowns(dropdown);
+      setDropdownOpen(dropdown, !isOpen);
+      return;
+    }
+    if (event.target.closest("[data-dropdown-panel]")) return;
+    closeAllDropdowns();
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeAllDropdowns();
+  });
+
+  document.addEventListener("click", function (event) {
+    const btn = event.target.closest("button[data-action][data-target]");
+    if (!btn) return;
+    event.preventDefault();
+    const group = btn.getAttribute("data-target");
+    const category = btn.getAttribute("data-category") || "";
+    const boxes = getBoxes(group, category);
+    if (!boxes.length) return;
+    const action = btn.getAttribute("data-action");
+    if (action === "select-all" || action === "select-category") {
+      boxes.forEach(b => (b.checked = true));
+    }
+    if (action === "invert-all" || action === "invert-category") {
+      boxes.forEach(b => (b.checked = !b.checked));
+    }
+    const dropdown = btn.closest("[data-dropdown]");
+    if (dropdown) updateDropdownCount(dropdown);
+    else updateAllDropdownCounts();
+    scheduleRefresh();
+  });
+
+  document.addEventListener("change", function (event) {
+    const target = event.target;
+    if (!target || target.type !== "checkbox" || !target.hasAttribute("data-group")) return;
+    const dropdown = target.closest("[data-dropdown]");
+    if (dropdown) updateDropdownCount(dropdown);
+    else updateAllDropdownCounts();
+  });
+
+  function getSelectedValues(group) {
+    const boxes = getBoxes(group);
+    if (!boxes.length) return [];
+    const checked = boxes.filter(b => b.checked).map(b => String(b.value || "").trim()).filter(Boolean);
+    if (checked.length === 0 || checked.length === boxes.length) return [];
+    return checked;
+  }
+
+  function applyGroupSelection(group, selected) {
+    const boxes = getBoxes(group);
+    if (!boxes.length) return;
+    const sel = new Set((selected || []).map(v => String(v || "").trim()).filter(Boolean));
+    if (sel.size === 0) {
+      boxes.forEach(b => (b.checked = true));
+    } else {
+      boxes.forEach(b => (b.checked = sel.has(String(b.value || "").trim())));
+    }
+  }
+
+  function applyMultiSelectState() {
+    applyGroupSelection("agent", state.agent_user_id);
+    applyGroupSelection("ext-agent", state.ext_agent_account);
+    applyGroupSelection("tag", state.tag_id);
+    applyGroupSelection("scenario", state.reception_scenario);
+    applyGroupSelection("satisfaction", state.satisfaction_change);
+    updateAllDropdownCounts();
+  }
+
+  function appendCurrentFilterParams(params) {
+    if (!params) return;
+    const platform = document.getElementById("platform-filter")?.value || "";
+    const match = (document.getElementById("match-filter")?.value || "").trim();
+    const cid = (document.getElementById("cid-filter")?.value || "").trim();
+    const minRounds = (document.getElementById("min-rounds-filter")?.value || "").trim();
+    const maxRounds = (document.getElementById("max-rounds-filter")?.value || "").trim();
+    const onlyFlagged = document.getElementById("only-flagged-filter")?.checked;
+    const hasAnalysis = (document.getElementById("has-analysis-filter")?.value || "").trim();
+
+    const agents = getSelectedValues("agent");
+    const extAgents = getSelectedValues("ext-agent");
+    const scenarios = getSelectedValues("scenario");
+    const satisfactions = getSelectedValues("satisfaction");
+    const tags = getSelectedValues("tag");
+
+    if (platform) params.append("platform", platform);
+    agents.forEach(v => params.append("agent_user_id", v));
+    extAgents.forEach(v => params.append("ext_agent_account", v));
+    scenarios.forEach(v => params.append("reception_scenario", v));
+    satisfactions.forEach(v => params.append("satisfaction_change", v));
+    tags.forEach(v => params.append("tag_id", v));
+    if (match) params.append("match", match);
+    if (cid) params.append("cid", cid);
+    if (minRounds) params.append("min_rounds", minRounds);
+    if (maxRounds) params.append("max_rounds", maxRounds);
+    if (onlyFlagged) params.append("only_flagged", "1");
+    if (hasAnalysis) params.append("has_analysis", hasAnalysis);
+  }
+
+  function forceTimeToYesterdayEachEntry() {
+    const ymd = getYesterdayYMD();
+    const d = parseYMDLocal(ymd);
+    const year = d ? String(d.getFullYear()) : "";
+    const quarter = d ? String(Math.floor(d.getMonth() / 3) + 1) : "1";
+    const month = d ? String(d.getMonth() + 1) : "1";
+    const week = d ? String(getISOWeek(d)) : "1";
+    setState({
+      time_mode: "yesterday",
+      start: ymd,
+      end: ymd,
+      day: ymd,
+      year,
+      quarter,
+      month,
+      week,
+      time_initialized: true,
+    });
+  }
 
   function showRule(btn) {
     const title = btn.getAttribute("data-rule-title") || "判定标准";
@@ -2026,11 +2518,12 @@
     const satisfaction = btn.getAttribute("data-satisfaction");
 
     const params = new URLSearchParams();
-    params.append("tag_id", tagId);
+    params.append("hit_tag_id", tagId);
     const start = document.getElementById("start-date").value;
     const end = document.getElementById("end-date").value;
     if (start) params.append("start", start);
     if (end) params.append("end", end);
+    appendCurrentFilterParams(params);
     if (platform) params.append("platform", platform);
     if (agentUserId) params.append("agent_user_id", agentUserId);
     if (scenario) params.append("reception_scenario", scenario);
@@ -2050,10 +2543,10 @@
     const params = new URLSearchParams();
     let titleBase = "质检对话列表";
     if (tagId) {
-      params.append("tag_id", tagId);
+      params.append("hit_tag_id", tagId);
       titleBase = "命中标签的对话列表";
     } else if (categoryId) {
-      params.append("category_id", categoryId);
+      params.append("hit_category_id", categoryId);
       titleBase = "命中标签分类的对话列表";
     }
 
@@ -2061,6 +2554,7 @@
     const end = document.getElementById("end-date").value;
     if (start) params.append("start", start);
     if (end) params.append("end", end);
+    appendCurrentFilterParams(params);
     if (platform) params.append("platform", platform);
     if (agentUserId) params.append("agent_user_id", agentUserId);
     if (scenario) params.append("reception_scenario", scenario);
@@ -2113,6 +2607,7 @@
   });
 
   loadState();
+  forceTimeToYesterdayEachEntry();
   applyStateToFilters();
   renderFieldChips();
   refreshReport();

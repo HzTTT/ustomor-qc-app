@@ -10,7 +10,7 @@ from main import login_action
 from models import Role, User
 
 
-def _make_request() -> Request:
+def _make_request(*, host: str = "testserver") -> Request:
     scope = {
         "type": "http",
         "asgi": {"spec_version": "2.3", "version": "3.0"},
@@ -20,9 +20,9 @@ def _make_request() -> Request:
         "path": "/login",
         "raw_path": b"/login",
         "query_string": b"",
-        "headers": [],
+        "headers": [(b"host", host.encode("ascii", "ignore"))],
         "client": ("127.0.0.1", 12345),
-        "server": ("testserver", 80),
+        "server": (host, 80),
     }
     return Request(scope)
 
@@ -66,6 +66,63 @@ def test_login_sets_persistent_cookie_when_remember_on(session, monkeypatch):
     assert morsel["max-age"] == str(7 * 24 * 3600)
     assert morsel["expires"]
 
+def test_login_cookie_domain_drops_www_prefix(session, monkeypatch):
+    monkeypatch.setattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7, raising=False)
+    monkeypatch.setattr(auth_settings, "COOKIE_SECURE", False, raising=False)
+    monkeypatch.setattr(auth_settings, "COOKIE_DOMAIN", "", raising=False)
+
+    u = User(
+        username="u_domain",
+        email="u_domain@example.com",
+        name="U",
+        role=Role.admin,
+        password_hash=hash_password("pw"),
+    )
+    session.add(u)
+    session.commit()
+
+    resp = login_action(
+        _make_request(host="www.marllen.com"),
+        BackgroundTasks(),
+        username="u_domain",
+        password="pw",
+        remember="on",
+        next=None,
+        session=session,
+    )
+    c = _get_cookie(resp)
+    morsel = c[auth_settings.COOKIE_NAME]
+    assert morsel["domain"] == "marllen.com"
+
+
+def test_login_cookie_domain_not_set_for_ip_host(session, monkeypatch):
+    monkeypatch.setattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7, raising=False)
+    monkeypatch.setattr(auth_settings, "COOKIE_SECURE", False, raising=False)
+    monkeypatch.setattr(auth_settings, "COOKIE_DOMAIN", "", raising=False)
+
+    u = User(
+        username="u_ip",
+        email="u_ip@example.com",
+        name="U",
+        role=Role.admin,
+        password_hash=hash_password("pw"),
+    )
+    session.add(u)
+    session.commit()
+
+    resp = login_action(
+        _make_request(host="127.0.0.1"),
+        BackgroundTasks(),
+        username="u_ip",
+        password="pw",
+        remember="on",
+        next=None,
+        session=session,
+    )
+    c = _get_cookie(resp)
+    morsel = c[auth_settings.COOKIE_NAME]
+    assert (morsel["domain"] or "") == ""
+
 
 def test_login_sets_session_cookie_when_remember_off(session, monkeypatch):
     monkeypatch.setattr(auth_settings, "REMEMBER_EXPIRE_DAYS", 7, raising=False)
@@ -97,4 +154,3 @@ def test_login_sets_session_cookie_when_remember_off(session, monkeypatch):
     assert morsel.value
     assert morsel["max-age"] == ""
     assert morsel["expires"] == ""
-

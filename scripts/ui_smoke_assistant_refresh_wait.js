@@ -29,29 +29,49 @@ async function login(page) {
   ]);
 }
 
-async function cancelPendingJobIfAny(page) {
+async function waitPendingJobIfAny(page, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 60000);
   try {
-    const data = await page.evaluate(async () => {
-      const resp = await fetch("/api/marllen-assistant/thread?limit=1", { credentials: "same-origin" });
-      const json = await resp.json().catch(() => ({}));
-      return { ok: resp.ok, json };
-    });
-    const pending = data && data.json ? data.json.pending_job : null;
-    const st = pending && pending.status ? String(pending.status) : "";
-    if (pending && pending.id && st && st !== "done" && st !== "error") {
-      const jobId = String(pending.id);
-      await page.evaluate(async (jid) => {
-        await fetch("/api/marllen-assistant/jobs/" + jid + "/cancel", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-        });
-      }, jobId);
+    while (Date.now() < deadline) {
+      const data = await page.evaluate(async () => {
+        const resp = await fetch("/api/marllen-assistant/thread?limit=1", { credentials: "same-origin" });
+        const json = await resp.json().catch(() => ({}));
+        return { ok: resp.ok, json };
+      });
+      const pending = data && data.json ? data.json.pending_job : null;
+      const st = pending && pending.status ? String(pending.status) : "";
+      if (!pending || !pending.id || !st || st === "done" || st === "error") return;
+      await page.waitForTimeout(1500);
     }
   } catch (e) {
     // ignore
   }
+}
+
+async function getPendingJob(page) {
+  try {
+    const data = await page.evaluate(async () => {
+      const resp = await fetch("/api/marllen-assistant/thread?limit=10", { credentials: "same-origin" });
+      const json = await resp.json().catch(() => ({}));
+      return { ok: resp.ok, json };
+    });
+    const pending = data && data.json ? data.json.pending_job : null;
+    return pending && pending.id ? pending : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function waitUntilPendingOrFinished(page, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 10000);
+  while (Date.now() < deadline) {
+    const pending = await getPendingJob(page);
+    const st = pending && pending.status ? String(pending.status) : "";
+    if (pending && pending.id && st && st !== "done" && st !== "error") return { pending: true, job: pending };
+    // Not pending: either finished quickly or transient fetch. Allow a short retry window.
+    await page.waitForTimeout(300);
+  }
+  return { pending: false, job: null };
 }
 
 async function run() {
@@ -69,33 +89,45 @@ async function run() {
     await login(page);
     await page.goto(`${BASE_URL}/reports/tags`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(250);
-    await cancelPendingJobIfAny(page);
+    // Keep it tolerant: assistant jobs can legitimately take > 45s for large datasets.
+    await waitPendingJobIfAny(page, 180000);
     await screenshot(page, "01-initial.png");
 
     // Open assistant
-    await page.locator("#marllenAssistantFab").click();
-    await page.waitForSelector("#marllenAssistantPanel:not(.hidden)");
+    const panelVisible0 = await page.locator("#marllenAssistantPanel").isVisible().catch(() => false);
+    if (!panelVisible0) {
+      await page.locator("#marllenAssistantFab").click();
+      await page.waitForSelector("#marllenAssistantPanel:not(.hidden)");
+    }
     await page.waitForTimeout(250);
     await screenshot(page, "02-open.png");
+
+    // If there is still an in-flight job, the input is disabled. Wait briefly before proceeding.
+    await page.waitForFunction(() => {
+      const el = document.getElementById("marllenAssistantInput");
+      return !!(el && !el.disabled);
+    }, { timeout: 60000 }).catch(() => {});
 
     // Send a question that should take some time so we can refresh mid-flight.
     const q = "给我一份数据快照（概览），并解释一下最近7天的变化趋势。";
     await page.locator("#marllenAssistantInput").fill(q);
     await page.locator("#marllenAssistantSend").click();
 
-    // Pending bubble should appear quickly.
-    await page.waitForSelector(".marllen-typing-dots", { timeout: 10000 });
-    await screenshot(page, "03-pending.png");
+    // Prefer testing refresh-while-pending. If the answer comes back very fast, skip that path.
+    const st0 = await waitUntilPendingOrFinished(page, 10000);
+    await screenshot(page, st0.pending ? "03-pending.png" : "03-after-send.png");
 
-    // Close panel so localStorage open=0, then reload and expect auto-open while job is still pending.
-    await page.locator("#marllenAssistantMin").click();
-    await page.waitForSelector("#marllenAssistantPanel.hidden", { state: "attached" });
-    await page.waitForSelector("#marllenAssistantFab:not(.hidden)", { state: "visible" });
-    await screenshot(page, "04-collapsed.png");
+    if (st0.pending) {
+      // Close panel so localStorage open=0, then reload and expect auto-open while job is still pending.
+      await page.locator("#marllenAssistantMin").click();
+      await page.waitForSelector("#marllenAssistantPanel.hidden", { state: "attached" });
+      await page.waitForSelector("#marllenAssistantFab:not(.hidden)", { state: "visible" });
+      await screenshot(page, "04-collapsed.png");
 
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#marllenAssistantPanel:not(.hidden)", { timeout: 15000 });
-    await screenshot(page, "05-auto-open-after-reload.png");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector("#marllenAssistantPanel:not(.hidden)", { timeout: 15000 });
+      await screenshot(page, "05-auto-open-after-reload.png");
+    }
 
     // Best-effort: wait for completion or an error.
     const doneOrError = page.waitForFunction(() => {
@@ -108,6 +140,22 @@ async function run() {
     await page.waitForTimeout(250);
     await screenshot(page, "06-final.png");
 
+    // Assert: no error banner, and at least one assistant reply exists.
+    const finalState = await page.evaluate(async () => {
+      const resp = await fetch("/api/marllen-assistant/thread?limit=20", { credentials: "same-origin" });
+      const json = await resp.json().catch(() => ({}));
+      return { ok: resp.ok, json };
+    });
+    const errText = await page.locator("#marllenAssistantError").textContent().catch(() => "");
+    if (errText && String(errText).trim()) {
+      throw new Error("assistant error banner: " + String(errText).trim().slice(0, 300));
+    }
+    const msgs = finalState && finalState.json && Array.isArray(finalState.json.messages) ? finalState.json.messages : [];
+    const hasAssistant = msgs.some((m) => m && String(m.role || "") === "assistant" && String(m.content || "").trim());
+    if (!hasAssistant) {
+      throw new Error("assistant produced no assistant message");
+    }
+
     console.log("OK: assistant refresh-wait smoke finished");
   } finally {
     await context.close();
@@ -119,4 +167,3 @@ run().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
-

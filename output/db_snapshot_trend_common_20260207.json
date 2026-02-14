@@ -1,0 +1,117 @@
+{
+  "as_of": "2026-02-08",
+  "latest_dates": {
+    "conversation_started_at_max": "2026-02-07",
+    "message_ts_max": "2026-02-07",
+    "qc_imported_at_max": "2026-02-08"
+  },
+  "window_common_last7": {
+    "start": "2026-02-01",
+    "end": "2026-02-07"
+  },
+  "window_common_prev7": {
+    "start": "2026-01-25",
+    "end": "2026-01-31"
+  },
+  "totals": {
+    "conversations": 14505,
+    "messages": 103721,
+    "qc_records": 6864
+  },
+  "platform_conversation_counts": [
+    {
+      "platform": "taobao",
+      "conversations": 14278
+    },
+    {
+      "platform": "douyin",
+      "conversations": 227
+    }
+  ],
+  "last7": {
+    "conversations": 7040,
+    "messages": 43111,
+    "qc_records": 6263
+  },
+  "prev7": {
+    "conversations": 2622,
+    "messages": 28701,
+    "qc_records": 265
+  },
+  "delta7_vs_prev7": {
+    "conversations": {
+      "abs": 4418,
+      "pct": 168.4973302822273
+    },
+    "messages": {
+      "abs": 14410,
+      "pct": 50.20730984983102
+    },
+    "qc_records": {
+      "abs": 5998,
+      "pct": 2263.3962264150946
+    }
+  },
+  "daily_last7": {
+    "conversations": {
+      "labels": [
+        "2026-02-01",
+        "2026-02-02",
+        "2026-02-03",
+        "2026-02-04",
+        "2026-02-05",
+        "2026-02-06",
+        "2026-02-07"
+      ],
+      "values": [
+        447,
+        401,
+        431,
+        1261,
+        1560,
+        1484,
+        1456
+      ]
+    },
+    "messages": {
+      "labels": [
+        "2026-02-01",
+        "2026-02-02",
+        "2026-02-03",
+        "2026-02-04",
+        "2026-02-05",
+        "2026-02-06",
+        "2026-02-07"
+      ],
+      "values": [
+        5625,
+        4678,
+        4693,
+        6740,
+        7572,
+        6772,
+        7031
+      ]
+    },
+    "qc_records": {
+      "labels": [
+        "2026-02-01",
+        "2026-02-02",
+        "2026-02-03",
+        "2026-02-04",
+        "2026-02-05",
+        "2026-02-06",
+        "2026-02-07"
+      ],
+      "values": [
+        1432,
+        2441,
+        1059,
+        313,
+        17,
+        712,
+        289
+      ]
+    }
+  }
+}

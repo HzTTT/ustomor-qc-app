@@ -1,0 +1,108 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='980' height='560' viewBox='0 0 980 560'>
+<style>text{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#111} .muted{fill:#666;font-size:12px} .axis{stroke:#999;stroke-width:1} .grid{stroke:#e5e5e5;stroke-width:1}</style>
+<rect x='0' y='0' width='100%' height='100%' fill='white'/>
+<text x='90' y='28' font-size='16'>近7天数据趋势（对话/消息/质检）</text>
+<text x='90' y='50' class='muted'>窗口：2026-02-02 ~ 2026-02-08；快照截至：2026-02-08；消息最大日期：2026-02-07（因此 2026-02-08 消息可能缺失）</text>
+<text x='90' y='80' font-size='14'>每日对话数（distinct conversation）</text>
+<line x1='90' y1='90' x2='90' y2='230' class='axis'/>
+<line x1='90' y1='230' x2='940' y2='230' class='axis'/>
+<line x1='90' y1='230.00' x2='940' y2='230.00' class='grid'/>
+<text x='80' y='234.00' text-anchor='end' class='muted'>0</text>
+<line x1='90' y1='195.00' x2='940' y2='195.00' class='grid'/>
+<text x='80' y='199.00' text-anchor='end' class='muted'>500</text>
+<line x1='90' y1='160.00' x2='940' y2='160.00' class='grid'/>
+<text x='80' y='164.00' text-anchor='end' class='muted'>1,000</text>
+<line x1='90' y1='125.00' x2='940' y2='125.00' class='grid'/>
+<text x='80' y='129.00' text-anchor='end' class='muted'>1,500</text>
+<line x1='90' y1='90.00' x2='940' y2='90.00' class='grid'/>
+<text x='80' y='94.00' text-anchor='end' class='muted'>2,000</text>
+<rect x='90.00' y='199.69' width='112.86' height='30.31' fill='#4E79A7' rx='4' ry='4'/>
+<text x='146.43' y='193.69' text-anchor='middle' class='muted'>433</text>
+<text x='146.43' y='248.00' text-anchor='middle' class='muted'>02-02</text>
+<rect x='212.86' y='202.63' width='112.86' height='27.37' fill='#4E79A7' rx='4' ry='4'/>
+<text x='269.29' y='196.63' text-anchor='middle' class='muted'>391</text>
+<text x='269.29' y='248.00' text-anchor='middle' class='muted'>02-03</text>
+<rect x='335.71' y='200.67' width='112.86' height='29.33' fill='#4E79A7' rx='4' ry='4'/>
+<text x='392.14' y='194.67' text-anchor='middle' class='muted'>419</text>
+<text x='392.14' y='248.00' text-anchor='middle' class='muted'>02-04</text>
+<rect x='458.57' y='143.90' width='112.86' height='86.10' fill='#4E79A7' rx='4' ry='4'/>
+<text x='515.00' y='137.90' text-anchor='middle' class='muted'>1,230</text>
+<text x='515.00' y='248.00' text-anchor='middle' class='muted'>02-05</text>
+<rect x='581.43' y='116.11' width='112.86' height='113.89' fill='#4E79A7' rx='4' ry='4'/>
+<text x='637.86' y='110.11' text-anchor='middle' class='muted'>1,627</text>
+<text x='637.86' y='248.00' text-anchor='middle' class='muted'>02-06</text>
+<rect x='704.29' y='126.12' width='112.86' height='103.88' fill='#4E79A7' rx='4' ry='4'/>
+<text x='760.71' y='120.12' text-anchor='middle' class='muted'>1,484</text>
+<text x='760.71' y='248.00' text-anchor='middle' class='muted'>02-07</text>
+<rect x='827.14' y='128.08' width='112.86' height='101.92' fill='#4E79A7' rx='4' ry='4'/>
+<text x='883.57' y='122.08' text-anchor='middle' class='muted'>1,456</text>
+<text x='883.57' y='248.00' text-anchor='middle' class='muted'>02-08</text>
+<text x='90' y='260' font-size='14'>每日消息数（messages rows）</text>
+<line x1='90' y1='270' x2='90' y2='410' class='axis'/>
+<line x1='90' y1='410' x2='940' y2='410' class='axis'/>
+<line x1='90' y1='410.00' x2='940' y2='410.00' class='grid'/>
+<text x='80' y='414.00' text-anchor='end' class='muted'>0</text>
+<line x1='90' y1='375.00' x2='940' y2='375.00' class='grid'/>
+<text x='80' y='379.00' text-anchor='end' class='muted'>2,000</text>
+<line x1='90' y1='340.00' x2='940' y2='340.00' class='grid'/>
+<text x='80' y='344.00' text-anchor='end' class='muted'>4,000</text>
+<line x1='90' y1='305.00' x2='940' y2='305.00' class='grid'/>
+<text x='80' y='309.00' text-anchor='end' class='muted'>6,000</text>
+<line x1='90' y1='270.00' x2='940' y2='270.00' class='grid'/>
+<text x='80' y='274.00' text-anchor='end' class='muted'>8,000</text>
+<rect x='90.00' y='328.13' width='112.86' height='81.86' fill='#F28E2B' rx='4' ry='4'/>
+<text x='146.43' y='322.13' text-anchor='middle' class='muted'>4,678</text>
+<text x='146.43' y='428.00' text-anchor='middle' class='muted'>02-02</text>
+<rect x='212.86' y='327.87' width='112.86' height='82.13' fill='#F28E2B' rx='4' ry='4'/>
+<text x='269.29' y='321.87' text-anchor='middle' class='muted'>4,693</text>
+<text x='269.29' y='428.00' text-anchor='middle' class='muted'>02-03</text>
+<rect x='335.71' y='292.05' width='112.86' height='117.95' fill='#F28E2B' rx='4' ry='4'/>
+<text x='392.14' y='286.05' text-anchor='middle' class='muted'>6,740</text>
+<text x='392.14' y='428.00' text-anchor='middle' class='muted'>02-04</text>
+<rect x='458.57' y='277.49' width='112.86' height='132.51' fill='#F28E2B' rx='4' ry='4'/>
+<text x='515.00' y='271.49' text-anchor='middle' class='muted'>7,572</text>
+<text x='515.00' y='428.00' text-anchor='middle' class='muted'>02-05</text>
+<rect x='581.43' y='291.49' width='112.86' height='118.51' fill='#F28E2B' rx='4' ry='4'/>
+<text x='637.86' y='285.49' text-anchor='middle' class='muted'>6,772</text>
+<text x='637.86' y='428.00' text-anchor='middle' class='muted'>02-06</text>
+<rect x='704.29' y='286.96' width='112.86' height='123.04' fill='#F28E2B' rx='4' ry='4'/>
+<text x='760.71' y='280.96' text-anchor='middle' class='muted'>7,031</text>
+<text x='760.71' y='428.00' text-anchor='middle' class='muted'>02-07</text>
+<rect x='827.14' y='410.00' width='112.86' height='0.00' fill='#F28E2B' rx='4' ry='4'/>
+<text x='883.57' y='404.00' text-anchor='middle' class='muted'>0</text>
+<text x='883.57' y='428.00' text-anchor='middle' class='muted'>02-08</text>
+<text x='90' y='440' font-size='14'>每日质检记录数（qc records）</text>
+<line x1='90' y1='450' x2='90' y2='590' class='axis'/>
+<line x1='90' y1='590' x2='940' y2='590' class='axis'/>
+<line x1='90' y1='590.00' x2='940' y2='590.00' class='grid'/>
+<text x='80' y='594.00' text-anchor='end' class='muted'>0</text>
+<line x1='90' y1='555.00' x2='940' y2='555.00' class='grid'/>
+<text x='80' y='559.00' text-anchor='end' class='muted'>750</text>
+<line x1='90' y1='520.00' x2='940' y2='520.00' class='grid'/>
+<text x='80' y='524.00' text-anchor='end' class='muted'>1,500</text>
+<line x1='90' y1='485.00' x2='940' y2='485.00' class='grid'/>
+<text x='80' y='489.00' text-anchor='end' class='muted'>2,250</text>
+<line x1='90' y1='450.00' x2='940' y2='450.00' class='grid'/>
+<text x='80' y='454.00' text-anchor='end' class='muted'>3,000</text>
+<rect x='90.00' y='476.09' width='112.86' height='113.91' fill='#59A14F' rx='4' ry='4'/>
+<text x='146.43' y='470.09' text-anchor='middle' class='muted'>2,441</text>
+<text x='146.43' y='608.00' text-anchor='middle' class='muted'>02-02</text>
+<rect x='212.86' y='540.58' width='112.86' height='49.42' fill='#59A14F' rx='4' ry='4'/>
+<text x='269.29' y='534.58' text-anchor='middle' class='muted'>1,059</text>
+<text x='269.29' y='608.00' text-anchor='middle' class='muted'>02-03</text>
+<rect x='335.71' y='575.39' width='112.86' height='14.61' fill='#59A14F' rx='4' ry='4'/>
+<text x='392.14' y='569.39' text-anchor='middle' class='muted'>313</text>
+<text x='392.14' y='608.00' text-anchor='middle' class='muted'>02-04</text>
+<rect x='458.57' y='589.21' width='112.86' height='0.79' fill='#59A14F' rx='4' ry='4'/>
+<text x='515.00' y='583.21' text-anchor='middle' class='muted'>17</text>
+<text x='515.00' y='608.00' text-anchor='middle' class='muted'>02-05</text>
+<rect x='581.43' y='556.77' width='112.86' height='33.23' fill='#59A14F' rx='4' ry='4'/>
+<text x='637.86' y='550.77' text-anchor='middle' class='muted'>712</text>
+<text x='637.86' y='608.00' text-anchor='middle' class='muted'>02-06</text>
+<rect x='704.29' y='576.51' width='112.86' height='13.49' fill='#59A14F' rx='4' ry='4'/>
+<text x='760.71' y='570.51' text-anchor='middle' class='muted'>289</text>
+<text x='760.71' y='608.00' text-anchor='middle' class='muted'>02-07</text>
+<rect x='827.14' y='574.32' width='112.86' height='15.68' fill='#59A14F' rx='4' ry='4'/>
+<text x='883.57' y='568.32' text-anchor='middle' class='muted'>336</text>
+<text x='883.57' y='608.00' text-anchor='middle' class='muted'>02-08</text>
+</svg>

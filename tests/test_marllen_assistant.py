@@ -490,3 +490,71 @@ def test_list_threads_orders_active_first_then_recent(session: Session):
 
     rows = ma.list_threads(session, owner_user_id=int(u.id), limit=10)
     assert [r.title for r in rows[:3]] == ["active", "new", "old"]
+
+
+def test_mark_assistant_job_error_creates_visible_error_message(session: Session):
+    u = _mk_user(session)
+    t = ma.get_or_create_active_thread(session, owner_user_id=int(u.id))
+
+    user_msg = AssistantMessage(thread_id=int(t.id), role="user", content="hi")
+    session.add(user_msg)
+    session.commit()
+    session.refresh(user_msg)
+
+    job = AssistantJob(
+        thread_id=int(t.id),
+        created_by_user_id=int(u.id),
+        status="running",  # type: ignore
+        user_message_id=int(user_msg.id),
+        started_at=datetime.utcnow(),
+        extra={},
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    ma.mark_assistant_job_error(session, job, "boom")
+
+    job2 = session.get(AssistantJob, int(job.id))
+    assert job2 is not None
+    st2 = getattr(job2.status, "value", None) or str(job2.status)
+    assert str(st2) == "error"
+    assert int(job2.assistant_message_id or 0) > 0
+
+    m = session.get(AssistantMessage, int(job2.assistant_message_id or 0))
+    assert m is not None
+    assert m.role == "assistant"
+    assert "没生成出来" in (m.content or "")
+    assert (m.meta or {}).get("type") == "job_error"
+
+
+def test_claim_one_assistant_job_does_not_mark_stale_when_heartbeat_recent(session: Session):
+    u = _mk_user(session)
+    t = ma.get_or_create_active_thread(session, owner_user_id=int(u.id))
+
+    user_msg = AssistantMessage(thread_id=int(t.id), role="user", content="hi")
+    session.add(user_msg)
+    session.commit()
+    session.refresh(user_msg)
+
+    # Older than heartbeat cutoff (~90s) but still within hard timeout.
+    started_at = datetime.utcnow() - timedelta(seconds=120)
+    job = AssistantJob(
+        thread_id=int(t.id),
+        created_by_user_id=int(u.id),
+        status="running",  # type: ignore
+        user_message_id=int(user_msg.id),
+        started_at=started_at,
+        extra={"heartbeat_at": ma._utc_iso_z()},
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    claimed = ma.claim_one_assistant_job(session)
+    assert claimed is None  # no pending jobs
+
+    job2 = session.get(AssistantJob, int(job.id))
+    assert job2 is not None
+    st2 = getattr(job2.status, "value", None) or str(job2.status)
+    assert str(st2) == "running"

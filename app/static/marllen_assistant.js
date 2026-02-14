@@ -2,6 +2,15 @@
   const root = document.getElementById("marllenAssistant");
   if (!root) return;
 
+  // Static URL base:
+  // - Avoid hardcoded "/static/..." so it works behind reverse proxies with a path prefix.
+  // - Prefer same-origin assets for CN/offline environments.
+  let STATIC_BASE = "/static/";
+  try {
+    const cur = document.currentScript && document.currentScript.src ? String(document.currentScript.src) : "";
+    if (cur) STATIC_BASE = new URL("./", cur).toString();
+  } catch (e) {}
+
   const canWrite = String((root.dataset && root.dataset.canWrite) ? root.dataset.canWrite : "") === "1";
   const readOnly = String((root.dataset && root.dataset.readOnly) ? root.dataset.readOnly : "") === "1";
   const userRole = (root.dataset && root.dataset.userRole) ? String(root.dataset.userRole) : "";
@@ -21,6 +30,12 @@
   const tip = document.getElementById("marllenAssistantTip");
   const tipClose = document.getElementById("marllenAssistantTipClose");
 
+  const execWrap = document.getElementById("marllenAssistantExec");
+  const execLogEl = document.getElementById("marllenAssistantExecLog");
+  const execMetaEl = document.getElementById("marllenAssistantExecMeta");
+  const btnExecToggle = document.getElementById("marllenAssistantExecToggle");
+  const btnCancel = document.getElementById("marllenAssistantCancel");
+
   const threadsOverlay = document.getElementById("marllenAssistantThreadsOverlay");
   const btnThreadsClose = document.getElementById("marllenAssistantThreadsClose");
   const threadsSearch = document.getElementById("marllenAssistantThreadsSearch");
@@ -33,6 +48,7 @@
   const LS_POS = "marllenAssistant.pos.v1";
   const LS_OPEN = "marllenAssistant.open.v1";
   const LS_TIP_CLOSED = "marllenAssistant.tipClosed.v1";
+  const LS_EXEC_OPEN = "marllenAssistant.execOpen.v1";
 
   let threadId = null;
   let pendingJobId = null;
@@ -44,6 +60,14 @@
   let suppressFabClick = false;
   let posBeforeOpen = null;
   let newThreadLock = false;
+  let execOpen = true;
+
+  // Prefer same-origin ECharts for China/offline environments; keep CDNs as fallback.
+  const ECHARTS_SOURCES = [
+    STATIC_BASE + "vendor/echarts.min.js",
+    "https://unpkg.com/echarts@5.5.1/dist/echarts.min.js",
+    "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js",
+  ];
 
   function clamp(n, min, max) {
     return Math.max(min, Math.min(max, n));
@@ -142,15 +166,69 @@
     errEl.classList.toggle("hidden", !text);
   }
 
+  function setExecOpen(open) {
+    execOpen = !!open;
+    try { localStorage.setItem(LS_EXEC_OPEN, execOpen ? "1" : "0"); } catch (e) {}
+    if (btnExecToggle) btnExecToggle.textContent = execOpen ? "收起" : "展开";
+    if (execLogEl) execLogEl.classList.toggle("hidden", !execOpen);
+    if (execMetaEl) execMetaEl.classList.toggle("hidden", !execOpen || !(execMetaEl.textContent || "").trim());
+  }
+
+  function updateExecLog(exec) {
+    if (!execWrap) return;
+    // Show header while busy; hide entirely otherwise.
+    execWrap.classList.toggle("hidden", !busy);
+
+    if (btnCancel) {
+      btnCancel.disabled = !busy || !pendingJobId;
+    }
+
+    if (!execLogEl && !execMetaEl) return;
+
+    const tail = exec && exec.tail ? String(exec.tail) : "";
+    const bytes = exec && typeof exec.bytes === "number" ? exec.bytes : Number(exec && exec.bytes ? exec.bytes : 0);
+    const truncated = !!(exec && exec.truncated);
+
+    if (execMetaEl) {
+      let meta = "";
+      if (bytes > 0) {
+        const kb = Math.max(1, Math.round(bytes / 1024));
+        meta = truncated ? ("日志太长，已截断：当前显示最后 24KB / 总计 " + String(kb) + "KB") : ("日志大小：" + String(kb) + "KB");
+      }
+      execMetaEl.textContent = meta;
+      execMetaEl.classList.toggle("hidden", !execOpen || !meta);
+    }
+
+    if (execLogEl) {
+      const atBottom = (execLogEl.scrollTop + execLogEl.clientHeight) >= (execLogEl.scrollHeight - 24);
+      execLogEl.textContent = tail || (busy ? "（暂无输出）" : "");
+      if (atBottom) {
+        try { execLogEl.scrollTop = execLogEl.scrollHeight; } catch (e) {}
+      }
+      execLogEl.classList.toggle("hidden", !execOpen);
+    }
+  }
+
   function setBusy(nextBusy, statusText) {
     busy = !!nextBusy;
     if (input) input.disabled = busy || !canWrite;
     if (btnSend) btnSend.disabled = busy || !canWrite;
-    // Keep "新对话" clickable even when busy, so users can recover from a stuck job.
-    if (btnNew) btnNew.disabled = !canWrite;
+    // While busy, block "新对话" to keep one coherent timeline (no forced recovery).
+    if (btnNew) btnNew.disabled = busy || !canWrite;
     if (btnSend) btnSend.textContent = busy ? "处理中…" : SEND_LABEL;
-    if (btnNew) btnNew.textContent = (busy && pendingJobId) ? "强制新对话" : NEW_LABEL;
-    safeSetStatus(statusText || (busy ? "分析中…（复杂问题可能需要几十秒～几分钟）" : ""));
+    if (btnNew) btnNew.textContent = NEW_LABEL;
+    safeSetStatus(statusText || (busy ? "分析中…（复杂问题可能较慢，最长 30 分钟）" : ""));
+
+    // Exec panel visibility + cancel availability are coupled to busy state.
+    if (execWrap) execWrap.classList.toggle("hidden", !busy);
+    if (btnCancel) btnCancel.disabled = !busy || !pendingJobId;
+    if (!busy) {
+      try { if (execLogEl) execLogEl.textContent = ""; } catch (e) {}
+      try { if (execMetaEl) execMetaEl.textContent = ""; } catch (e) {}
+    }
+    if (btnExecToggle) btnExecToggle.textContent = execOpen ? "收起" : "展开";
+    if (execLogEl) execLogEl.classList.toggle("hidden", !execOpen);
+    if (execMetaEl) execMetaEl.classList.toggle("hidden", !execOpen || !(execMetaEl.textContent || "").trim());
   }
 
   function escapeText(s) {
@@ -163,23 +241,60 @@
     } catch (e) {}
     if (echartsPromise) return echartsPromise;
 
-    echartsPromise = new Promise(function (resolve, reject) {
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
-      script.async = true;
-      script.onload = function () {
+    function loadScript(src, timeoutMs) {
+      return new Promise(function (resolve, reject) {
+        const script = document.createElement("script");
+        script.src = src;
+        script.async = true;
+        script.referrerPolicy = "no-referrer";
+        script.dataset.marllenEcharts = "1";
+
+        let done = false;
+        const timer = setTimeout(function () {
+          if (done) return;
+          done = true;
+          try { script.remove(); } catch (e) {}
+          reject(new Error("echarts load timeout: " + src));
+        }, Math.max(1500, Number(timeoutMs || 6000)));
+
+        script.onload = function () {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try {
+            if (window.echarts) resolve(window.echarts);
+            else reject(new Error("echarts not available after load: " + src));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        script.onerror = function () {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { script.remove(); } catch (e) {}
+          reject(new Error("failed to load echarts: " + src));
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    echartsPromise = (async function () {
+      let lastErr = null;
+      for (const src of ECHARTS_SOURCES) {
         try {
-          if (window.echarts) resolve(window.echarts);
-          else reject(new Error("echarts not available"));
+          return await loadScript(src, 6500);
         } catch (e) {
-          reject(e);
+          lastErr = e;
         }
-      };
-      script.onerror = function () {
-        reject(new Error("failed to load echarts"));
-      };
-      document.head.appendChild(script);
+      }
+      throw lastErr || new Error("failed to load echarts");
+    })().catch(function (e) {
+      // Allow retry later (e.g. network recovers, user opens assistant again).
+      echartsPromise = null;
+      throw e;
     });
+
     return echartsPromise;
   }
 
@@ -531,18 +646,21 @@
         if (!job) {
           setBusy(false, "");
           pendingJobId = null;
+          updateExecLog(null);
           return;
         }
         const st = String(job.status || "");
         if (st === "done") {
           pendingJobId = null;
           setBusy(false, "");
+          updateExecLog(null);
           await loadThread();
           return;
         }
         if (st === "error") {
           pendingJobId = null;
           setBusy(false, "");
+          updateExecLog(null);
           safeSetError("生成失败：" + (job.last_error || "未知错误"));
           await loadThread();
           return;
@@ -564,9 +682,10 @@
         let statusText = "分析中…（复杂问题可能较慢）";
         if (elapsedS >= 60) {
           const mins = Math.max(1, Math.round(elapsedS / 60));
-          statusText = "分析中…（已等待 " + String(mins) + " 分钟；若一直不动可点「强制新对话」恢复）";
+          statusText = "分析中…（已等待 " + String(mins) + " 分钟）";
         }
         setBusy(true, statusText);
+        updateExecLog(job.exec || null);
         backoffMs = clamp(Math.floor(backoffMs * 1.25), 800, 4000);
         pollTimer = setTimeout(tick, backoffMs);
       } catch (e) {
@@ -576,6 +695,23 @@
       }
     };
     pollTimer = setTimeout(tick, backoffMs);
+  }
+
+  async function cancelPendingJob() {
+    if (!pendingJobId) return;
+    safeSetError("");
+    safeSetStatus("正在终止…");
+    try {
+      await apiPost("/api/marllen-assistant/jobs/" + String(pendingJobId) + "/cancel", {});
+      stopPoll();
+      pendingJobId = null;
+      setBusy(false, "");
+      updateExecLog(null);
+      await loadThread();
+    } catch (e) {
+      safeSetStatus("");
+      safeSetError(e && e.message ? String(e.message) : "终止失败");
+    }
   }
 
   async function send() {
@@ -600,6 +736,7 @@
       if (input) input.value = "";
       const jobId = data && data.job_id ? data.job_id : null;
       pendingJobId = jobId;
+      updateExecLog(null);
       await loadThread();
       if (jobId) startPoll(jobId);
     } catch (e) {
@@ -610,22 +747,15 @@
 
   async function newThread() {
     if (newThreadLock) return;
-    // If we're busy but have no job id yet (e.g. submitting), do nothing.
-    if (busy && !pendingJobId) return;
+    if (busy) return;
     if (!canWrite) {
       safeSetError("当前账号无新建对话权限。");
       return;
     }
     safeSetError("");
-    setBusy(true, pendingJobId ? "终止当前并新建对话…" : "新建对话…");
+    setBusy(true, "新建对话…");
     newThreadLock = true;
     try {
-      // Best-effort cancel: some historical rows can get stuck at running forever.
-      if (pendingJobId) {
-        try {
-          await apiPost("/api/marllen-assistant/jobs/" + String(pendingJobId) + "/cancel", {});
-        } catch (e) {}
-      }
       await apiPost("/api/marllen-assistant/threads/new", {});
       pendingJobId = null;
       stopPoll();
@@ -997,6 +1127,22 @@
     } else {
       probePendingAndMaybeOpen();
     }
+  })();
+
+  // Exec panel prefs + actions
+  (function initExecPanel() {
+    try {
+      execOpen = localStorage.getItem(LS_EXEC_OPEN) !== "0";
+    } catch (e) {
+      execOpen = true;
+    }
+    setExecOpen(execOpen);
+    btnExecToggle && btnExecToggle.addEventListener("click", function () {
+      setExecOpen(!execOpen);
+    });
+    btnCancel && btnCancel.addEventListener("click", function () {
+      cancelPendingJob();
+    });
   })();
 
   threadsSearch && threadsSearch.addEventListener("input", function () {
